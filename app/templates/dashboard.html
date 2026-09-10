@@ -160,21 +160,50 @@ const VIEWS = { servers: viewServers, commands: viewCommands, staff: viewStaff, 
 
 function keyDialog(title, token) {
   const lines = 'set nexus_web_url "' + location.origin + '"\nset nexus_web_token "' + token + '"';
-  Modal.show(
-    '<h2>' + escapeHtml(title) + '</h2>' +
-    '<p class="muted">This is the only time the key is shown — the site keeps only a hash of it. ' +
-    'Put both lines in <b>server.cfg</b> above <code>ensure NexusAC</code>, then restart the resource.</p>' +
-    '<div class="code-block"><pre>' + escapeHtml(lines) + '</pre></div>' +
-    '<div class="button-row" style="justify-content:flex-end;margin-top:18px">' +
-    '<button class="button small" id="copy">Copy</button>' +
-    '<button class="button light small" id="done">Done</button></div>',
-    (node) => {
-      node.querySelector('#copy').addEventListener('click', async (event) => {
-        try { await navigator.clipboard.writeText(lines); event.target.textContent = 'Copied'; }
-        catch (error) { event.target.textContent = 'Select the text above'; }
-      });
-      node.querySelector('#done').addEventListener('click', () => { Modal.close(); load(); });
+
+  async function copy(button, text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = label; }, 2000);
+    } catch (error) {
+      // Clipboard access can be refused (insecure origin, permission). Select the
+      // text instead so it is still one keystroke away rather than a dead button.
+      const field = document.getElementById('key-value');
+      if (field) { const r = document.createRange(); r.selectNodeContents(field);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+      button.textContent = 'Press Ctrl+C';
     }
+  }
+
+  Modal.show(
+    '<div class="notice" style="margin-bottom:18px">' +
+    'This is the only time the key is shown. The site stores just a hash of it — if you lose it, ' +
+    'rotate the key and paste the new one.</div>' +
+
+    '<label style="display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;' +
+    'color:#73737c;margin-bottom:7px">Server API key</label>' +
+    '<div class="key-reveal" id="key-value">' + escapeHtml(token) + '</div>' +
+    '<div class="button-row" style="margin:10px 0 22px">' +
+    '<button class="button light small" id="copy-key">Copy key</button>' +
+    '<span class="muted" style="font-size:11px">43 characters</span></div>' +
+
+    '<h3 style="margin-bottom:8px">Add to server.cfg</h3>' +
+    '<p class="muted" style="font-size:12px;margin-bottom:10px">Both lines go above ' +
+    '<code>ensure NexusAC</code>. Then run <code>restart NexusAC</code>.</p>' +
+    '<div class="code-block"><pre>' + escapeHtml(lines) + '</pre></div>' +
+    '<div class="button-row" style="justify-content:space-between;margin-top:18px">' +
+    '<button class="button small" id="copy-lines">Copy both lines</button>' +
+    '<button class="button light small" id="done">Done</button></div>',
+
+    (node) => {
+      node.querySelector('#copy-key').addEventListener('click', (event) =>
+        copy(event.target, token, 'Copy key'));
+      node.querySelector('#copy-lines').addEventListener('click', (event) =>
+        copy(event.target, lines, 'Copy both lines'));
+      node.querySelector('#done').addEventListener('click', () => { Modal.close(); load(); });
+    },
+    'NEXUSAC / SERVER KEY', title
   );
 }
 

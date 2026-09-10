@@ -3447,3 +3447,20 @@ table td .muted { font-size: 11px; }
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
+
+/* The API key is shown exactly once, so it has to be unmistakable and readable
+   in one glance: full contrast, generous tracking, and broken on characters so a
+   43-character token never wraps mid-word into something you cannot transcribe. */
+.key-reveal {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: .02em;
+  color: #fff;
+  background: #0c0c0f;
+  border: 1px solid #3a3a44;
+  border-radius: 6px;
+  padding: 14px 15px;
+  word-break: break-all;
+  user-select: all;
+}

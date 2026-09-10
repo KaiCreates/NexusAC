@@ -120,7 +120,11 @@ const Modal = {
     document.body.appendChild(dialog);
     this.node = dialog;
     this.open = true;
-    dialog.addEventListener('close', () => Modal.close());
+    // Identity check, not a bare Modal.close(). close() fires its event on a
+    // queued task, so when one drawer replaces another the OLD dialog's event
+    // lands after the new one is already showing and would tear it straight
+    // back down -- which is what made a freshly created API key never appear.
+    dialog.addEventListener('close', () => { if (Modal.node === dialog) Modal.close(); });
     dialog.addEventListener('click', (event) => {
       if (event.target.closest('[data-close]')) Modal.close();
       // A click on the dialog element itself (not its children) is the backdrop.

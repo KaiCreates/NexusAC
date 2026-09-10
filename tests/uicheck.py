@@ -170,6 +170,42 @@ with sync_playwright() as p:
     page.screenshot(path=OUT + "/shot-evidence-drawer.png")
     page.keyboard.press("Escape")
 
+    # Creating a key opens a drawer from inside another drawer. <dialog>.close()
+    # fires its event on a queued task, so a stale handler used to tear the new
+    # drawer down and the key was never seen at all.
+    print("\n== api key reveal ==")
+    page.goto(SITE + "/dashboard", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    page.click("#add-server")
+    page.wait_for_timeout(500)
+    page.fill("dialog.drawer #name", "Key Reveal Test")
+    page.click("dialog.drawer #create")
+    page.wait_for_timeout(1800)
+    check("key drawer stays open after creating a server",
+          page.locator("dialog.drawer[open]").count() == 1)
+    shown = page.inner_text("dialog.drawer #key-value").strip() if page.locator(
+        "dialog.drawer #key-value").count() else ""
+    check("the key is displayed in full", len(shown) == 43, repr(shown))
+    check("it is the same key as the server.cfg lines",
+          shown and shown in page.inner_text("dialog.drawer .code-block"), shown)
+    check("copy buttons are present",
+          page.locator("dialog.drawer #copy-key").count() == 1
+          and page.locator("dialog.drawer #copy-lines").count() == 1)
+    page.click("dialog.drawer #done")
+    page.wait_for_timeout(1200)
+
+    # Rotation goes confirm-drawer -> key-drawer, the same chained pattern.
+    page.locator("[data-rotate][data-name='Key Reveal Test']").click()
+    page.wait_for_timeout(500)
+    page.locator("dialog.drawer #go").click()
+    page.wait_for_timeout(1800)
+    rotated = page.inner_text("dialog.drawer #key-value").strip() if page.locator(
+        "dialog.drawer #key-value").count() else ""
+    check("rotation reveals the new key", len(rotated) == 43, repr(rotated))
+    check("rotated key differs from the original", rotated and rotated != shown)
+    page.click("dialog.drawer #done")
+    page.wait_for_timeout(800)
+
     page.goto(SITE + "/docs")
     page.wait_for_timeout(400)
     check("docs page renders", "nexus_web_token" in page.content())
