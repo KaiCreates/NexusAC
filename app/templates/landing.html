@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}NexusAC — server-authoritative FiveM anti-cheat{% endblock %}
+{% block body %}
+<main id="main">
+  <section class="hero">
+    <div class="hero-orbit" aria-hidden="true"></div>
+    <span class="eyebrow pill">
+      {{ ui.icon('shield-check', 14) }} THE NEXT LAYER OF FIVEM SECURITY {{ ui.icon('arrow-right', 13) }}
+    </span>
+    <h1>Protection that<br><span>stays ahead.</span></h1>
+    <p>
+      Your community deserves better than a fair fight.<br>
+      Detect threats. Investigate with clarity. Stay in control.
+    </p>
+    <div class="hero-actions">
+      <a href="/register" class="button light">Get NexusAC {{ ui.icon('arrow-up-right', 17) }}</a>
+      <a href="/docs" class="button">Connect a server {{ ui.icon('arrow-right', 17) }}</a>
+    </div>
+    <div class="hero-caption">
+      <span>Built for FiveM</span><i></i>
+      <span>One connected dashboard</span><i></i>
+      <span>Your rules, in real time</span>
+    </div>
+  </section>
+
+  <section class="features-section" id="features">
+    <div class="section-heading">
+      <span class="eyebrow">HOW IT CONNECTS</span>
+      <h2>One key. Nothing exposed.</h2>
+      <p>
+        The anti-cheat keeps running server-authoritative on your box. This website is
+        the console for it — and the connection only ever goes one way.
+      </p>
+    </div>
+    <div class="feature-grid">
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('shield-check', 18) }}</span>
+        <h3>Outbound only</h3>
+        <p>
+          The resource polls this site over HTTPS every few seconds. Nothing is
+          port-forwarded and your server exposes no HTTP handler for anyone to find.
+        </p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('sliders', 18) }}</span>
+        <h3>Commands that expire</h3>
+        <p>
+          A kick, ban or setting change is queued with the value it expects to act on.
+          If the world moved, the anti-cheat refuses it rather than applying it to
+          whatever is there now.
+        </p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('camera', 18) }}</span>
+        <h3>Evidence, not verdicts</h3>
+        <p>
+          Every case carries its detector, confidence, trust level and screenshots. A
+          failed capture is recorded as failed, never as guilt.
+        </p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('key', 18) }}</span>
+        <h3>Executed exactly once</h3>
+        <p>
+          Each command carries a receipt id. A retry after a dropped connection returns
+          the previous result instead of running the action a second time.
+        </p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('users', 18) }}</span>
+        <h3>Staff with real roles</h3>
+        <p>
+          Owners and administrators can ban and edit configuration. Moderators can kick,
+          freeze and request a screenshot. Viewers read. Every action is audited.
+        </p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon">{{ ui.icon('radar', 18) }}</span>
+        <h3>The whole picture</h3>
+        <p>
+          Players and their risk, the live signal feed, detector maturity and mode, bans,
+          server logs and the full configuration schema — as the server sees them.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="final-cta">
+    <h2>Ready when you are.</h2>
+    <p>Create an account, add a server, paste two lines into server.cfg.</p>
+    <div class="hero-actions">
+      <a href="/register" class="button light">Create an account {{ ui.icon('arrow-up-right', 17) }}</a>
+      <a href="/docs" class="button">Read the setup {{ ui.icon('arrow-right', 17) }}</a>
+    </div>
+  </section>
+</main>
+{% endblock %}

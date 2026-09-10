@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Connect your server — NexusAC{% endblock %}
+{% block body %}
+<main id="main" class="docs-layout">
+  <aside class="docs-sidebar">
+    <span class="nav-group">SETUP</span>
+    <a class="sidebar-link" href="#key">1 · Get an API key</a>
+    <a class="sidebar-link" href="#cfg">2 · Put it in server.cfg</a>
+    <a class="sidebar-link" href="#check">3 · Restart and check</a>
+    <span class="nav-group">REFERENCE</span>
+    <a class="sidebar-link" href="#screens">Screenshots</a>
+    <a class="sidebar-link" href="#limits">What it can and cannot do</a>
+  </aside>
+
+  <article class="docs-article">
+    <span class="eyebrow">DOCUMENTATION</span>
+    <h1>Connect a server</h1>
+    <p class="docs-description">
+      The anti-cheat talks to this website outbound only. Nothing is port-forwarded, and the
+      resource exposes no HTTP handler of its own.
+    </p>
+
+    <h2 id="key">1 · Get an API key</h2>
+    <p>
+      <a class="text-link" href="/register">Create an account</a>, open the dashboard, press
+      <b>Add server</b> and name it. The key is shown once — the site stores only a hash of it.
+    </p>
+
+    <h2 id="cfg">2 · Put it in server.cfg</h2>
+    <p>Both lines must come <b>before</b> <code>ensure NexusAC</code>.</p>
+    <div class="code-block"><pre>set nexus_web_url "{{ app_url }}"
+set nexus_web_token "your-43-character-key"
+
+ensure NexusAC</pre></div>
+    <div class="notice" style="margin-top:16px">
+      {{ ui.icon('lock', 17) }}
+      The resource accepts an <code>https://</code> origin, or <code>http://</code> only when it is
+      localhost. Deploy to Vercel and use that HTTPS URL for a real server.
+    </div>
+
+    <h2 id="check">3 · Restart and check</h2>
+    <div class="code-block"><pre>restart NexusAC</pre></div>
+    <p>The server console tells you which state it is in.</p>
+    <div class="table-scroll">
+      <table class="docs-table">
+        <thead><tr><th>Console line</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="muted">(nothing about Web)</td>
+              <td>Connected. It polls every few seconds.</td></tr>
+          <tr class="flag"><td class="mono">[NexusAC Web] Not configured.</td>
+              <td>One of the two convars is missing or empty. In-game protection is unaffected.</td></tr>
+          <tr class="hot"><td class="mono">[NexusAC Web] Invalid URL or key.</td>
+              <td>The URL is not HTTPS (or localhost), or the key is not exactly 43 characters.</td></tr>
+          <tr class="hot"><td class="mono">Sync failed (HTTP 401)</td>
+              <td>The key does not match. Rotate it on the dashboard and paste the new one.</td></tr>
+          <tr class="hot"><td class="mono">Sync failed (HTTP 400)</td>
+              <td>Usually the machine clock: the two sides must agree within 90 seconds.</td></tr>
+          <tr class="hot"><td class="mono">Sync failed (HTTP 409)</td>
+              <td>A replayed or out-of-order snapshot. Restart the resource for a fresh session.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="screens">Screenshots</h2>
+    <p>
+      Evidence screenshots need the <code>Nexus-Screens</code> resource running alongside NexusAC —
+      it provides the server-side <code>requestClientScreenshot</code> export. Without it, cases
+      still arrive, with their screenshot status recorded as unavailable.
+    </p>
+
+    <h2 id="limits">What the website can and cannot do</h2>
+    <div class="table-scroll">
+      <table class="docs-table">
+        <thead><tr><th>Can</th><th>Cannot</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Kick, ban, unban, freeze, request a screenshot, change a whitelisted setting,
+                change a detector's mode.</td>
+            <td>Run arbitrary code, read a webhook URL, set a config path that is not in the
+                schema, or act while the server is offline.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="notice" style="margin-top:16px">
+      {{ ui.icon('shield-check', 17) }}
+      Every command expires after 60 seconds and carries a receipt id. If the connection drops
+      mid-execution, the retry returns the previous result rather than running the action twice.
+    </div>
+  </article>
+</main>
+{% endblock %}

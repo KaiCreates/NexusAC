@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block title %}Workspace — NexusAC{% endblock %}
+{% block chrome %}{% endblock %}
+{% block foot %}{% endblock %}
+{% block body %}
+<div class="dashboard full" id="main">
+  <aside class="dashboard-sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      {{ ui.brand() }}
+    </div>
+    <button class="workspace-picker" id="workspace-picker">
+      <span class="workspace-icon" id="ws-initial">·</span>
+      <span id="ws-name">Loading…<small id="ws-role">workspace</small></span>
+      {{ ui.icon('chevron-down', 13) }}
+    </button>
+    <nav aria-label="Dashboard navigation">
+      <span class="nav-group">WORKSPACE</span>
+      <button class="sidebar-link active" data-view="servers">{{ ui.icon('server') }} Servers</button>
+      <button class="sidebar-link" data-view="commands">{{ ui.icon('sliders') }} Commands</button>
+      <span class="nav-group">MANAGEMENT</span>
+      <button class="sidebar-link" data-view="staff">{{ ui.icon('users') }} Staff</button>
+      <button class="sidebar-link" data-view="audit">{{ ui.icon('log') }} Audit log</button>
+      <span class="nav-group">HELP</span>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
+      <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
+    </nav>
+    <div class="sidebar-bottom">
+      {{ ui.icon('shield-check', 17) }}
+      <div>Built for your community<small>NexusAC · web console</small></div>
+    </div>
+  </aside>
+
+  <div class="dashboard-main">
+    <header class="dashboard-topbar">
+      <div>
+        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
+          {{ ui.icon('menu', 19) }}
+        </button>
+        <span class="breadcrumb">Workspace {{ ui.icon('chevron-right', 13) }} <b id="crumb">Servers</b></span>
+      </div>
+      <div class="topbar-right">
+        <span class="simulation-dot"></span>
+        <span class="simulation-label" id="whoami">—</span>
+        <span class="avatar tiny" id="avatar">·</span>
+      </div>
+    </header>
+
+    <div class="dashboard-content">
+      <div class="dashboard-title">
+        <div>
+          <span class="eyebrow">CONTROL CENTER</span>
+          <h1 id="view-title">Your servers.</h1>
+          <p id="view-sub" class="muted">Every FiveM server this workspace protects.</p>
+        </div>
+        <div class="button-row" id="title-actions"></div>
+      </div>
+
+      <p class="form-message" id="msg" hidden></p>
+      <div id="view"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+const msg = document.getElementById('msg');
+let state = null;
+let view = sessionStorage.getItem('nx_ws_view') || 'servers';
+
+const TITLES = {
+  servers: ['Your servers.', 'Every FiveM server this workspace protects.'],
+  commands: ['Command history.', 'What staff asked the anti-cheat to do, and what it answered.'],
+  staff: ['Staff.', 'Who can see this workspace, and what they are allowed to do.'],
+  audit: ['Audit log.', 'Every action taken from this website.'],
+};
+
+/* ------------------------------------------------------------------ views */
+
+function viewServers() {
+  if (!state.servers.length) {
+    return '<section class="panel"><div class="empty-state">' +
+      '<h3>No servers yet</h3><p>Add a server to get an API key, then paste two lines into ' +
+      'server.cfg. <a class="text-link" href="/docs">Read the setup →</a></p></div></section>';
+  }
+  return '<div class="server-cards">' + state.servers.map((server) => {
+    const owner = state.user.role === 'owner';
+    return '<article class="panel server-card">' +
+      '<div class="panel-heading"><div>' +
+        '<h3>' + escapeHtml(server.name) + '</h3>' +
+        '<span class="server-region">key ' + escapeHtml(server.hint || '') + '… · added ' +
+          escapeHtml(ago(server.created, state.serverTime)) + '</span>' +
+      '</div></div>' +
+      '<div class="button-row" style="margin-bottom:16px">' +
+        '<span class="badge ' + (server.online ? 'success' : 'danger') + '">' +
+          '<span class="status-dot"></span> ' + (server.online ? 'Reporting' : 'Offline') + '</span>' +
+        '<span class="badge">last seen ' + escapeHtml(ago(server.lastSeen, state.serverTime)) + '</span>' +
+      '</div>' +
+      '<div class="button-row">' +
+        '<a class="button light small" href="/dashboard/servers/' + server.id + '">Open console</a>' +
+        (owner ? '<button class="button small" data-rotate="' + server.id + '" data-name="' +
+                   escapeHtml(server.name) + '">Rotate key</button>' +
+                 '<button class="button small" data-remove="' + server.id + '" data-name="' +
+                   escapeHtml(server.name) + '">Remove</button>' : '') +
+      '</div></article>';
+  }).join('') + '</div>';
+}
+
+function viewCommands() {
+  const badge = { succeeded: 'success', failed: 'danger', uncertain: 'warning', expired: 'warning' };
+  const rows = state.commands.map((command) =>
+    '<tr><td><b>' + escapeHtml(command.body.type) + '</b>' +
+      (command.body.reason ? '<div class="muted">' + escapeHtml(command.body.reason) + '</div>' : '') +
+    '</td>' +
+    '<td>' + escapeHtml(command.actor) + '</td>' +
+    '<td><span class="badge ' + (badge[command.status] || '') + '">' + escapeHtml(command.status) + '</span>' +
+      (command.result ? '<div class="muted">' + escapeHtml(command.result) + '</div>' : '') + '</td>' +
+    '<td class="muted">' + escapeHtml(ago(command.created, state.serverTime)) + '</td></tr>').join('');
+  return '<section class="panel"><div class="panel-heading"><h3>Recent commands</h3></div>' +
+    (rows ? '<div class="table-scroll"><table><thead><tr><th>Action</th><th>By</th>' +
+      '<th>Status</th><th>When</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="empty-state"><h3>Nothing sent yet</h3><p>Commands you send from a server ' +
+        'console appear here with the answer the anti-cheat gave.</p></div>') + '</section>';
+}
+
+function viewStaff() {
+  const owner = state.user.role === 'owner';
+  const rows = state.members.map((member) =>
+    '<tr><td><span class="player-cell"><span class="avatar tiny">' +
+      escapeHtml((member.name || '?')[0].toUpperCase()) + '</span> ' + escapeHtml(member.name) + '</span></td>' +
+    '<td class="muted">' + escapeHtml(member.email) + '</td>' +
+    '<td><span class="badge">' + escapeHtml(member.role) + '</span></td>' +
+    '<td style="text-align:right">' + (owner && member.role !== 'owner'
+      ? '<button class="button small" data-kickstaff="' + member.id + '">Remove</button>' : '') +
+    '</td></tr>').join('');
+  return '<section class="panel"><div class="panel-heading"><h3>Staff</h3>' +
+    (owner ? '<div class="button-row"><button class="button small" id="invite">Invite</button>' +
+             '<button class="button small" id="join">Redeem code</button></div>'
+           : '<span class="badge">Owner only</span>') + '</div>' +
+    '<div class="table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+}
+
+function viewAudit() {
+  const rows = state.audit.map((entry) =>
+    '<tr><td class="muted">' + escapeHtml(ago(entry.at, state.serverTime)) + '</td>' +
+    '<td>' + escapeHtml(entry.actor) + '</td>' +
+    '<td><span class="badge">' + escapeHtml(entry.action) + '</span></td>' +
+    '<td class="muted">' + escapeHtml(entry.detail) + '</td></tr>').join('');
+  return '<section class="panel"><div class="panel-heading"><h3>Audit log</h3></div>' +
+    (rows ? '<div class="table-scroll"><table><thead><tr><th>When</th><th>Who</th><th>Action</th>' +
+      '<th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="empty-state"><h3>Nothing recorded yet</h3><p>Signing in, adding a server ' +
+        'and every command are written here.</p></div>') + '</section>';
+}
+
+const VIEWS = { servers: viewServers, commands: viewCommands, staff: viewStaff, audit: viewAudit };
+
+/* ----------------------------------------------------------------- dialogs */
+
+function keyDialog(title, token) {
+  const lines = 'set nexus_web_url "' + location.origin + '"\nset nexus_web_token "' + token + '"';
+  Modal.show(
+    '<h2>' + escapeHtml(title) + '</h2>' +
+    '<p class="muted">This is the only time the key is shown — the site keeps only a hash of it. ' +
+    'Put both lines in <b>server.cfg</b> above <code>ensure NexusAC</code>, then restart the resource.</p>' +
+    '<div class="code-block"><pre>' + escapeHtml(lines) + '</pre></div>' +
+    '<div class="button-row" style="justify-content:flex-end;margin-top:18px">' +
+    '<button class="button small" id="copy">Copy</button>' +
+    '<button class="button light small" id="done">Done</button></div>',
+    (node) => {
+      node.querySelector('#copy').addEventListener('click', async (event) => {
+        try { await navigator.clipboard.writeText(lines); event.target.textContent = 'Copied'; }
+        catch (error) { event.target.textContent = 'Select the text above'; }
+      });
+      node.querySelector('#done').addEventListener('click', () => { Modal.close(); load(); });
+    }
+  );
+}
+
+function addServerDialog() {
+  Modal.show(
+    '<h2>Add a server</h2><p class="muted">One key per FiveM server.</p>' +
+    '<div class="form-stack"><label>Server name' +
+    '<input id="name" maxlength="80" placeholder="Trinidad RP — main"></label></div>' +
+    '<div id="out"></div>' +
+    '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
+    '<button class="button small" id="cancel">Cancel</button>' +
+    '<button class="button light small" id="create">Create key</button></div>',
+    (node) => {
+      node.querySelector('#cancel').addEventListener('click', () => Modal.close());
+      node.querySelector('#create').addEventListener('click', async (event) => {
+        const name = node.querySelector('#name').value.trim();
+        if (!name) return;
+        event.target.disabled = true;
+        const result = await api('/servers', { name });
+        event.target.disabled = false;
+        if (!result.ok) {
+          node.querySelector('#out').innerHTML =
+            '<p class="form-message bad">' + escapeHtml(result.error) + '</p>';
+          return;
+        }
+        keyDialog('API key for ' + name, result.data.token);
+      });
+    }
+  );
+}
+
+function confirmDialog(title, warning, label, onConfirm) {
+  Modal.show(
+    '<h2>' + escapeHtml(title) + '</h2>' +
+    '<div class="notice" style="margin:14px 0">' + warning + '</div>' +
+    '<div class="button-row" style="justify-content:flex-end">' +
+    '<button class="button small" id="cancel">Cancel</button>' +
+    '<button class="button light small" id="go">' + escapeHtml(label) + '</button></div>',
+    (node) => {
+      node.querySelector('#cancel').addEventListener('click', () => Modal.close());
+      node.querySelector('#go').addEventListener('click', () => onConfirm(node));
+    }
+  );
+}
+
+/* ------------------------------------------------------------------ render */
+
+function render() {
+  const [title, sub] = TITLES[view] || TITLES.servers;
+  document.getElementById('view-title').textContent = title;
+  document.getElementById('view-sub').textContent = sub;
+  document.getElementById('crumb').textContent =
+    view.charAt(0).toUpperCase() + view.slice(1);
+  document.getElementById('title-actions').innerHTML =
+    view === 'servers' && state.user.role === 'owner'
+      ? '<button class="button light small" id="add-server">Add server</button>' : '';
+  document.querySelectorAll('.sidebar-link[data-view]').forEach((link) =>
+    link.classList.toggle('active', link.dataset.view === view));
+  document.getElementById('view').innerHTML = (VIEWS[view] || viewServers)();
+
+  const add = document.getElementById('add-server');
+  if (add) add.addEventListener('click', addServerDialog);
+  const invite = document.getElementById('invite');
+  if (invite) invite.addEventListener('click', inviteDialog);
+  const join = document.getElementById('join');
+  if (join) join.addEventListener('click', joinDialog);
+}
+
+function inviteDialog() {
+  Modal.show(
+    '<h2>Invite a staff member</h2>' +
+    '<p class="muted">They create their own account, then redeem this code.</p>' +
+    '<div class="form-stack"><label>Role<select id="role">' +
+    '<option value="administrator">Administrator — everything except staff</option>' +
+    '<option value="moderator">Moderator — kick, freeze, screenshot</option>' +
+    '<option value="viewer">Viewer — read only</option></select></label></div>' +
+    '<div id="out"></div>' +
+    '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
+    '<button class="button small" id="cancel">Cancel</button>' +
+    '<button class="button light small" id="make">Create code</button></div>',
+    (node) => {
+      node.querySelector('#cancel').addEventListener('click', () => Modal.close());
+      node.querySelector('#make').addEventListener('click', async (event) => {
+        event.target.disabled = true;
+        const result = await api('/staff/invite', { role: node.querySelector('#role').value });
+        event.target.disabled = false;
+        node.querySelector('#out').innerHTML = result.ok
+          ? '<div class="code-block"><pre>' + escapeHtml(result.data.token) + '</pre></div>' +
+            '<p class="muted">Valid for 24 hours, single use.</p>'
+          : '<p class="form-message bad">' + escapeHtml(result.error) + '</p>';
+      });
+    }
+  );
+}
+
+function joinDialog() {
+  Modal.show(
+    '<h2>Redeem an invite code</h2>' +
+    '<div class="form-stack"><label>Invite code' +
+    '<input id="code" maxlength="43" placeholder="43-character code"></label></div><div id="out"></div>' +
+    '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
+    '<button class="button small" id="cancel">Cancel</button>' +
+    '<button class="button light small" id="go">Join</button></div>',
+    (node) => {
+      node.querySelector('#cancel').addEventListener('click', () => Modal.close());
+      node.querySelector('#go').addEventListener('click', async (event) => {
+        event.target.disabled = true;
+        const result = await api('/invite/accept', { token: node.querySelector('#code').value.trim() });
+        event.target.disabled = false;
+        if (result.ok) { Modal.close(); load(); }
+        else node.querySelector('#out').innerHTML =
+          '<p class="form-message bad">' + escapeHtml(result.error) + '</p>';
+      });
+    }
+  );
+}
+
+async function load() {
+  const result = await api('/workspace');
+  if (!result.ok) {
+    if (result.status === 401) return (location.href = '/login?next=/dashboard');
+    return note(msg, result.error, 'bad');
+  }
+  state = result.data;
+  const initial = (state.user.name || '?')[0].toUpperCase();
+  document.getElementById('ws-initial').textContent = initial;
+  document.getElementById('avatar').textContent = initial;
+  document.getElementById('ws-name').innerHTML =
+    escapeHtml(state.user.name) + '<small>' + escapeHtml(state.user.role) + ' workspace</small>';
+  document.getElementById('whoami').textContent = state.user.email;
+  render();
+}
+
+document.addEventListener('click', async (event) => {
+  const link = event.target.closest('.sidebar-link[data-view]');
+  if (link) {
+    view = link.dataset.view;
+    sessionStorage.setItem('nx_ws_view', view);
+    return render();
+  }
+  const menu = event.target.closest('#menu');
+  if (menu) return document.getElementById('sidebar').classList.toggle('mobile-open');
+
+  const rotate = event.target.closest('[data-rotate]');
+  if (rotate) {
+    const { rotate: id, name } = rotate.dataset;
+    return confirmDialog('Rotate the key for ' + name + '?',
+      'The current key stops working immediately. The server shows offline here until you paste ' +
+      'the new one into server.cfg and restart the resource. Any queued command is cancelled.',
+      'Rotate', async () => {
+        const result = await api('/servers/' + id + '/rotate', {});
+        if (result.ok) keyDialog('New key for ' + name, result.data.token);
+        else { Modal.close(); note(msg, result.error, 'bad'); }
+      });
+  }
+
+  const remove = event.target.closest('[data-remove]');
+  if (remove) {
+    const { remove: id, name } = remove.dataset;
+    return confirmDialog('Remove ' + name + '?',
+      'Its key, snapshots, evidence and screenshots are deleted. The anti-cheat keeps protecting ' +
+      'the server; it just stops reporting here.',
+      'Remove', async () => {
+        const result = await api('/servers/' + id + '/delete', {});
+        Modal.close();
+        if (result.ok) load(); else note(msg, result.error, 'bad');
+      });
+  }
+
+  const kick = event.target.closest('[data-kickstaff]');
+  if (kick) {
+    const result = await api('/staff/remove', { userId: kick.dataset.kickstaff });
+    if (result.ok) load(); else note(msg, result.error, 'bad');
+  }
+});
+
+load();
+setInterval(() => { if (!busy()) load(); }, 10000);
+</script>
+{% endblock %}

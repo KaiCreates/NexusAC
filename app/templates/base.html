@@ -1,0 +1,54 @@
+{% import "_icons.html" as ui %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NexusAC{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/brand/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+{% block chrome %}
+<header class="site-nav">
+  {{ ui.brand() }}
+  <nav aria-label="Main navigation">
+    <a href="/#features">Features</a>
+    <a href="/docs">Documentation</a>
+    {% if user %}<a href="/dashboard">Dashboard</a>{% endif %}
+  </nav>
+  <div class="nav-actions">
+    {% if user %}
+      <a href="/dashboard" class="login-link">{{ user.name }}</a>
+      <a href="#" id="signout" class="button light small">Sign out {{ ui.icon('logout', 15) }}</a>
+    {% else %}
+      <a href="/login" class="login-link">Sign in</a>
+      <a href="/register" class="button light small">Get NexusAC {{ ui.icon('arrow-up-right', 15) }}</a>
+    {% endif %}
+  </div>
+</header>
+{% endblock %}
+
+{% block body %}{% endblock %}
+
+{% block foot %}
+<footer class="footer">
+  <div>
+    {{ ui.brand() }}
+    <p>Built for communities. Designed for control.</p>
+  </div>
+  <div>
+    <a href="/docs">Documentation</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/register">Create an account</a>
+  </div>
+  <span class="muted">© 2026 NexusAC</span>
+</footer>
+{% endblock %}
+
+<script src="/static/app.js"></script>
+{% block script %}{% endblock %}
+</body>
+</html>

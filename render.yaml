@@ -1,0 +1,30 @@
+# Render Blueprint. Import the repo at render.com -> New -> Blueprint and this
+# configures the service; or create a Web Service manually with the same build
+# and start commands.
+services:
+  - type: web
+    name: nexusac
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      # sync:false means "prompt me in the dashboard, never store it in git".
+      # Copy each value from your local .env; APP_URL is the Render URL itself.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: REQUIRE_EMAIL_CONFIRMATION
+        value: "false"

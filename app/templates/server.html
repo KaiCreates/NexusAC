@@ -1,0 +1,579 @@
+{% extends "base.html" %}
+{% block title %}Server console — NexusAC{% endblock %}
+{% block chrome %}{% endblock %}
+{% block foot %}{% endblock %}
+{% block body %}
+<div class="dashboard full" id="main">
+  <aside class="dashboard-sidebar" id="sidebar">
+    <div class="sidebar-brand">{{ ui.brand() }}</div>
+    <a class="workspace-picker" href="/dashboard">
+      <span class="workspace-icon">{{ ui.icon('arrow-left', 13) }}</span>
+      <span id="ws-name">All servers<small>back to workspace</small></span>
+    </a>
+    <nav aria-label="Server navigation">
+      <span class="nav-group">WORKSPACE</span>
+      <button class="sidebar-link active" data-tab="Overview">{{ ui.icon('grid') }} Overview</button>
+      <button class="sidebar-link" data-tab="Players">{{ ui.icon('users') }} Players</button>
+      <span class="nav-group">SECURITY</span>
+      <button class="sidebar-link" data-tab="Detections">{{ ui.icon('scan-line') }} Detections
+        <span class="count" id="count-detections"></span></button>
+      <button class="sidebar-link" data-tab="Detectors">{{ ui.icon('radar') }} Detectors</button>
+      <button class="sidebar-link" data-tab="Bans">{{ ui.icon('ban') }} Bans</button>
+      <button class="sidebar-link" data-tab="Evidence">{{ ui.icon('camera') }} Evidence
+        <span class="count" id="count-evidence"></span></button>
+      <span class="nav-group">MANAGEMENT</span>
+      <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} Logs</button>
+      <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} Configuration</button>
+    </nav>
+    <div class="sidebar-bottom">
+      {{ ui.icon('shield-check', 17) }}
+      <div>Server-authoritative<small>the site only asks; the server decides</small></div>
+    </div>
+  </aside>
+
+  <div class="dashboard-main">
+    <header class="dashboard-topbar">
+      <div>
+        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
+          {{ ui.icon('menu', 19) }}
+        </button>
+        <span class="breadcrumb">
+          <a href="/dashboard">Workspace</a> {{ ui.icon('chevron-right', 13) }} <b id="crumb">Overview</b>
+        </span>
+      </div>
+      <div class="topbar-right">
+        <span class="simulation-dot" id="livedot"></span>
+        <span class="simulation-label" id="livelabel">Live</span>
+        <button class="icon-button" id="livetoggle" title="Pause live refresh" aria-label="Pause live refresh">
+          {{ ui.icon('rotate', 14) }}
+        </button>
+        <span class="avatar tiny" id="avatar">·</span>
+      </div>
+    </header>
+
+    <div class="dashboard-content">
+      <div class="server-toolbar">
+        <span class="badge" id="online-badge"><span class="status-dot"></span> …</span>
+        <span class="server-region" id="seen">—</span>
+        <span class="sync-note" id="rolenote"></span>
+      </div>
+
+      <div class="dashboard-title">
+        <div>
+          <span class="eyebrow">COMMAND CENTER</span>
+          <h1 id="name">Loading…</h1>
+          <p class="muted" id="subtitle">A live view of this server's security.</p>
+        </div>
+      </div>
+
+      <p class="form-message" id="msg" hidden></p>
+      <div class="stats-grid" id="stats" style="margin-bottom:20px"></div>
+      <div id="view"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+const SERVER = {{ server_id | tojson }};
+const msg = document.getElementById('msg');
+const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence', 'Logs', 'Configuration'];
+let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
+let live = true;
+let data = null;
+let lastSignature = '';
+
+const num = (value) => (value === undefined || value === null ? '—' : Number(value).toLocaleString());
+const short = (value, length) => {
+  const text = String(value === undefined || value === null ? '' : value);
+  return text.length > (length || 60) ? text.slice(0, length || 60) + '…' : text;
+};
+function riskClass(risk, thresholds) {
+  const limits = thresholds || {};
+  if (risk >= (limits.kick || 110)) return 'hot';
+  if (risk >= (limits.flag || 40)) return 'flag';
+  return '';
+}
+function panel(title, inner, right) {
+  return '<section class="panel"><div class="panel-heading"><h3>' + escapeHtml(title) + '</h3>' +
+    (right || '') + '</div>' + inner + '</section>';
+}
+function table(headers, rows, emptyTitle, emptyText) {
+  if (!rows.length) {
+    return '<div class="empty-state"><h3>' + escapeHtml(emptyTitle) + '</h3><p>' +
+      escapeHtml(emptyText) + '</p></div>';
+  }
+  return '<div class="table-scroll"><table><thead><tr>' +
+    headers.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' +
+    rows.join('') + '</tbody></table></div>';
+}
+function offlineNote() {
+  return data.online ? '' :
+    '<div class="notice" style="margin-bottom:16px">This server has not reported in ' +
+    escapeHtml(ago(data.lastSeen, data.serverTime)) + '. Commands are refused while it is offline. ' +
+    'Check the resource is running and that <code>nexus_web_url</code> and ' +
+    '<code>nexus_web_token</code> are set in server.cfg.</div>';
+}
+
+/* ----------------------------------------------------------------- views */
+
+function viewOverview() {
+  const snap = data.snapshot || {};
+  const overview = snap.overview || {};
+  const registry = overview.registry || {};
+  const integrations = snap.integrations || {};
+  const rows = [
+    ['Mode', overview.mode], ['Version', overview.version],
+    ['Uptime', overview.uptime ? duration(overview.uptime) : '—'],
+    ['Players online', num(overview.online)], ['Carrying risk', num(overview.scored)],
+    ['Above flag threshold', num(overview.watched)], ['Not reporting a client', num(overview.clientless)],
+    ['Entities created', num((overview.entities || {}).created)],
+    ['Entities denied', num((overview.entities || {}).denied)],
+    ['Allowlist entries', num(overview.allowCount)],
+    ['Registry models', num(registry.models)],
+    ['Vehicles / peds / weapons',
+      num(registry.vehicles) + ' / ' + num(registry.peds) + ' / ' + num(registry.weapons)],
+  ].map((pair) => '<tr><td class="muted">' + pair[0] + '</td><td><b>' +
+    escapeHtml(pair[1] === undefined ? '—' : pair[1]) + '</b></td></tr>');
+
+  const webhooks = (integrations.webhooks || []).map((channel) =>
+    '<tr class="' + (channel.configured && channel.status === 'failing' ? 'hot' : '') + '">' +
+    '<td>' + escapeHtml(channel.category) + '</td>' +
+    '<td><span class="badge ' + (channel.configured ? 'success' : '') + '">' +
+      (channel.configured ? 'configured' : 'not set') + '</span></td>' +
+    '<td class="muted">' + num(channel.sent) + ' sent · ' + num(channel.failed) + ' failed</td></tr>');
+
+  return offlineNote() +
+    '<div class="overview-middle">' +
+    panel('Server', table(['', ''], rows, 'No snapshot yet', 'Waiting for the first report.')) +
+    panel('Integrations',
+      '<div style="padding:0 17px 6px" class="muted">Screenshots (Nexus-Screens): ' +
+      '<span class="badge ' + (integrations.screenshots === 'started' ? 'success' : 'warning') + '">' +
+      escapeHtml(integrations.screenshots || 'unknown') + '</span></div>' +
+      table(['Channel', 'State', 'Delivery'], webhooks, 'No webhook channels',
+        'Configure Discord channels in the resource to see delivery health here.')) +
+    '</div>';
+}
+
+function viewPlayers() {
+  const snap = data.snapshot || {};
+  const thresholds = (snap.overview || {}).thresholds;
+  const can = ['owner', 'administrator', 'moderator'].includes(data.role);
+  const rows = (snap.players || []).map((player) => {
+    const actions = can && data.online
+      ? '<button class="button small" data-act="screenshot" data-src="' + player.src + '">Shot</button> ' +
+        '<button class="button small" data-act="freeze" data-src="' + player.src + '" data-on="' +
+          (!player.frozen) + '">' + (player.frozen ? 'Unfreeze' : 'Freeze') + '</button> ' +
+        '<button class="button small" data-act="kick" data-src="' + player.src + '">Kick</button>' +
+        (['owner', 'administrator'].includes(data.role)
+          ? ' <button class="button small" data-act="ban" data-src="' + player.src + '">Ban</button>' : '')
+      : '<span class="muted">—</span>';
+    return '<tr class="' + riskClass(player.risk, thresholds) + '">' +
+      '<td><span class="player-cell"><span class="avatar tiny">' +
+        escapeHtml((player.name || '?')[0].toUpperCase()) + '</span> ' +
+        escapeHtml(player.name || '?') + '</span>' +
+        '<div class="muted">ID ' + player.src +
+        (player.frozen ? ' · <span class="badge warning">frozen</span>' : '') +
+        (player.contained ? ' · <span class="badge danger">contained</span>' : '') + '</div></td>' +
+      '<td><b>' + num(player.risk) + '</b></td>' +
+      '<td class="muted">' + num(player.ping) + ' ms</td>' +
+      '<td class="muted">' + escapeHtml(player.lifecycle || '—') + '</td>' +
+      '<td class="muted mono">' + escapeHtml(short(player.ped, 22)) + '</td>' +
+      '<td class="muted">' + num(player.health) + ' / ' + num(player.armour) + '</td>' +
+      '<td class="muted">' + num(player.signals) + '</td>' +
+      '<td><span class="badge ' + (player.live ? 'success' : 'danger') + '">' +
+        '<span class="status-dot"></span> ' + (player.live ? 'live' : 'quiet') + '</span></td>' +
+      '<td style="text-align:right;white-space:nowrap">' + actions + '</td></tr>';
+  });
+  return offlineNote() + panel('Players',
+    table(['Player', 'Risk', 'Ping', 'Lifecycle', 'Ped', 'HP / Armour', 'Signals', 'Client', ''],
+      rows, 'Nobody connected', 'Players appear here as soon as they join.'),
+    '<span class="badge">' + (snap.players || []).length + ' online</span>');
+}
+
+function viewDetections() {
+  const snap = data.snapshot || {};
+  const rows = (snap.feed || []).map((entry) =>
+    '<tr class="' + (entry.weight >= 40 ? 'hot' : entry.weight > 0 ? 'flag' : '') + '">' +
+    '<td class="muted">' + escapeHtml(ago(entry.at, data.serverTime)) + '</td>' +
+    '<td>' + escapeHtml(entry.name || '—') + '<div class="muted">ID ' + (entry.src || 0) + '</div></td>' +
+    '<td><b>' + escapeHtml(entry.kind || '') + '</b></td>' +
+    '<td>' + (entry.weight ? '<span class="badge danger">+' + num(entry.weight) + '</span>'
+      : '<span class="badge">0</span>') + '</td>' +
+    '<td class="muted">' + num(entry.risk) + '</td>' +
+    '<td class="muted">' + escapeHtml(short(entry.detail, 90)) + '</td></tr>');
+  return panel('Live signal feed',
+    table(['When', 'Player', 'Kind', 'Weight', 'Risk', 'Detail'], rows,
+      'No signals recorded', 'That is the normal state on a clean server.'));
+}
+
+function viewDetectors() {
+  const snap = data.snapshot || {};
+  const editable = ['owner', 'administrator'].includes(data.role);
+  const rows = (snap.detectors || []).map((detector) => {
+    const mode = detector.mode || (detector.active ? 'enforce' : 'disabled');
+    const control = detector.locked
+      ? '<span class="badge">locked</span>'
+      : (editable && data.online
+        ? '<select data-detector="' + escapeHtml(detector.id) + '" data-expected="' +
+          escapeHtml(mode) + '">' + ['disabled', 'observe', 'enforce'].map((option) =>
+            '<option value="' + option + '"' + (option === mode ? ' selected' : '') + '>' +
+            option + '</option>').join('') + '</select>'
+        : '<span class="badge ' + (mode === 'enforce' ? 'success' : mode === 'observe' ? 'warning'
+            : 'danger') + '">' + escapeHtml(mode) + '</span>');
+    const stats = Object.entries(detector.stats || {})
+      .map(([key, value]) => key + ' ' + num(value)).join(' · ');
+    return '<tr class="' + (mode === 'disabled' ? 'flag' : '') + '">' +
+      '<td><b>' + escapeHtml(detector.id) + '</b><div class="muted">' +
+        escapeHtml(detector.name || '') + '</div></td>' +
+      '<td><span class="badge">' + escapeHtml(detector.maturity || '—') + '</span></td>' +
+      '<td>' + control + '</td>' +
+      '<td class="muted">' + escapeHtml(detector.enforcement || '—') + '</td>' +
+      '<td class="muted">' + escapeHtml(stats || '—') + '</td></tr>';
+  });
+  return offlineNote() + panel('Detectors',
+    table(['Detector', 'Maturity', 'Mode', 'Enforcement', 'Counters'], rows,
+      'No detectors reported', 'The server sends its detector list with every snapshot.'),
+    '<span class="badge">' + (snap.detectors || []).length + '</span>');
+}
+
+function viewBans() {
+  const snap = data.snapshot || {};
+  const canUnban = ['owner', 'administrator'].includes(data.role) && data.online;
+  const rows = (snap.bans || []).map((ban) =>
+    '<tr><td>' + escapeHtml(ban.name || '—') + '</td>' +
+    '<td class="muted mono" style="word-break:break-all">' + escapeHtml(short(ban.identifier, 44)) + '</td>' +
+    '<td class="muted">' + escapeHtml(short(ban.reason, 54)) + '</td>' +
+    '<td class="muted">' + escapeHtml(ago(ban.at, data.serverTime)) + '</td>' +
+    '<td>' + (ban.expires ? '<span class="badge">' +
+      new Date(ban.expires * 1000).toLocaleDateString() + '</span>'
+      : '<span class="badge danger">permanent</span>') + '</td>' +
+    '<td class="muted mono">' + escapeHtml(ban.evidence || '—') + '</td>' +
+    '<td style="text-align:right">' + (canUnban
+      ? '<button class="button small" data-unban="' + escapeHtml(ban.identifier) + '">Unban</button>' : '') +
+    '</td></tr>');
+  return offlineNote() + panel('Bans',
+    table(['Name', 'Identifier', 'Reason', 'When', 'Expires', 'Evidence', ''], rows,
+      'No bans on record', 'Bans made in game or from here both appear in this list.'),
+    '<span class="badge">' + (snap.bans || []).length + '</span>');
+}
+
+function viewEvidence() {
+  const cases = data.evidence || [];
+  const rows = cases.map((item, index) =>
+    '<tr class="' + (item.confidence >= 80 ? 'hot' : item.confidence >= 50 ? 'flag' : '') + '">' +
+    '<td class="muted">' + escapeHtml(ago(item.at, data.serverTime)) + '</td>' +
+    '<td><b>' + escapeHtml(item.detection || '—') + '</b><div class="muted">' +
+      escapeHtml(item.detector || '') + '</div></td>' +
+    '<td>' + escapeHtml((item.player || {}).name || '—') + '</td>' +
+    '<td><span class="confidence">' + num(item.confidence) + '%</span></td>' +
+    '<td><span class="badge ' + (item.action === 'ban' ? 'danger' : item.action === 'kick'
+      ? 'warning' : '') + '">' + escapeHtml(item.action || 'logged') + '</span></td>' +
+    '<td class="muted">' + (item.images ? item.images + ' image' + (item.images > 1 ? 's' : '')
+      : escapeHtml((item.screenshot || {}).status || 'none')) + '</td>' +
+    '<td style="text-align:right"><button class="button small" data-case="' + index +
+      '">Open</button></td></tr>');
+  return panel('Evidence',
+    table(['When', 'Detection', 'Player', 'Confidence', 'Action', 'Screenshots', ''], rows,
+      'No evidence recorded', 'A case is created when a detector reaches its confidence gate.'),
+    '<span class="badge">' + cases.length + '</span>');
+}
+
+function viewLogs() {
+  const snap = data.snapshot || {};
+  const rows = (snap.logs || []).map((entry) =>
+    '<tr><td class="muted">' + escapeHtml(ago(entry.at, data.serverTime)) + '</td>' +
+    '<td><span class="badge">' + escapeHtml(entry.category || entry.group || '—') + '</span></td>' +
+    '<td>' + escapeHtml(short(entry.title, 70)) + '</td>' +
+    '<td class="muted">' + escapeHtml(entry.player || '—') + '</td></tr>');
+  return panel('Server log',
+    table(['When', 'Category', 'Entry', 'Player'], rows,
+      'Nothing logged yet', 'Everything the resource records is routed through here first.'));
+}
+
+function viewConfig() {
+  const snap = data.snapshot || {};
+  const settings = ((snap.config || {}).settings) || {};
+  const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+  const keys = Object.keys(settings).sort();
+  const rows = keys.map((path) => {
+    const setting = settings[path];
+    let control;
+    if (!editable) {
+      control = '<span class="muted mono">' + escapeHtml(String(setting.value)) + '</span>';
+    } else if (typeof setting.value === 'boolean') {
+      control = '<button class="toggle ' + (setting.value ? 'on' : '') + '" data-setting="' +
+        escapeHtml(path) + '" data-kind="boolean" aria-label="Toggle ' + escapeHtml(path) +
+        '"><span></span></button>';
+    } else if (setting.values) {
+      control = '<select data-setting="' + escapeHtml(path) + '" data-kind="enum">' +
+        Object.keys(setting.values).map((option) =>
+          '<option value="' + escapeHtml(option) + '"' +
+          (option === setting.value ? ' selected' : '') + '>' + escapeHtml(option) +
+          '</option>').join('') + '</select>';
+    } else {
+      control = '<input data-setting="' + escapeHtml(path) + '" data-kind="' +
+        escapeHtml(setting.kind) + '" value="' + escapeHtml(String(setting.value)) +
+        '" style="max-width:130px">';
+    }
+    const range = (setting.lo !== undefined && setting.hi !== undefined)
+      ? setting.lo + ' – ' + setting.hi : '';
+    return '<tr><td class="mono" style="word-break:break-all">' + escapeHtml(path) + '</td>' +
+      '<td>' + control + '</td>' +
+      '<td class="muted">' + escapeHtml(setting.kind || '') +
+        (range ? ' · ' + escapeHtml(range) : '') + '</td>' +
+      '<td>' + (setting.live ? '<span class="badge success">live</span>'
+        : '<span class="badge warning">needs restart</span>') + '</td></tr>';
+  });
+  return offlineNote() +
+    panel('Configuration',
+      table(['Path', 'Value', 'Type', 'Applies'], rows,
+        'No configuration schema reported', 'The server publishes its whitelisted settings here.'),
+      '<span class="badge">' + keys.length + ' settings</span>') +
+    '<p class="panel-note">Changes are queued as a command carrying the value the page currently ' +
+    'shows. If the value changed on the server in between, the anti-cheat refuses the edit instead ' +
+    'of overwriting it.</p>';
+}
+
+const VIEWS = {
+  Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
+  Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
+  Logs: viewLogs, Configuration: viewConfig,
+};
+
+/* --------------------------------------------------------------- render */
+
+function renderStats() {
+  const overview = (data.snapshot || {}).overview || {};
+  const thresholds = overview.thresholds || {};
+  const cards = [
+    ['Status', data.online ? 'Online' : 'Offline',
+      data.online ? 'Reporting every few seconds' : 'No recent report', 'shield-check'],
+    ['Mode', (overview.mode || '—'), overview.mode === 'observe'
+      ? 'Recording only, not acting' : 'Acting on the risk engine', 'sliders'],
+    ['Players', num(overview.online), num(overview.clientless) + ' not reporting a client', 'users'],
+    ['Carrying risk', num(overview.scored), num(overview.watched) + ' above the flag threshold', 'scan-line'],
+    ['Entities denied', num((overview.entities || {}).denied),
+      num((overview.entities || {}).created) + ' created', 'ban'],
+    ['Uptime', overview.uptime ? duration(overview.uptime) : '—', 'Since the resource started', 'activity'],
+    ['Ban threshold', num(thresholds.ban), 'flag ' + num(thresholds.flag) +
+      ' · kick ' + num(thresholds.kick), 'radar'],
+    ['Evidence', num((data.evidence || []).length), 'Cases with detail attached', 'camera'],
+  ];
+  document.getElementById('stats').innerHTML = cards.map((card) =>
+    '<article class="panel stat"><span>' + escapeHtml(card[0]) + ICONS[card[3]] + '</span>' +
+    '<strong>' + escapeHtml(card[1]) + '</strong>' +
+    '<small>' + escapeHtml(card[2]) + '</small></article>').join('');
+}
+
+function render() {
+  document.getElementById('name').textContent = data.name || 'Server';
+  document.getElementById('crumb').textContent = tab;
+  document.getElementById('avatar').textContent = (data.name || '?')[0].toUpperCase();
+  document.getElementById('online-badge').className =
+    'badge ' + (data.online ? 'success' : 'danger');
+  document.getElementById('online-badge').innerHTML =
+    '<span class="status-dot"></span> ' + (data.online ? 'Protected' : 'Offline');
+  document.getElementById('seen').textContent =
+    'last seen ' + ago(data.lastSeen, data.serverTime) + ' · key ' + (data.hint || '') + '…';
+  document.getElementById('rolenote').textContent = 'your role: ' + data.role;
+  const detections = ((data.snapshot || {}).feed || []).filter((e) => e.weight > 0).length;
+  document.getElementById('count-detections').textContent = detections || '';
+  document.getElementById('count-evidence').textContent = (data.evidence || []).length || '';
+  renderStats();
+  document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
+    link.classList.toggle('active', link.dataset.tab === tab));
+  document.getElementById('view').innerHTML = (VIEWS[tab] || viewOverview)();
+}
+
+async function load(force) {
+  if (!force && busy()) return;
+  const result = await api('/servers/' + SERVER + '/snapshot');
+  if (!result.ok) {
+    if (result.status === 401) return (location.href = '/login?next=/dashboard');
+    return note(msg, result.error, 'bad');
+  }
+  data = result.data;
+  // Only repaint when something actually changed, so a half-typed value or an
+  // open dropdown is not destroyed by a poll that brought nothing new.
+  const signature = JSON.stringify([tab, data.online, data.lastSeen, data.snapshot,
+                                    (data.evidence || []).length]);
+  if (signature === lastSignature && !force) return;
+  lastSignature = signature;
+  render();
+}
+
+/* -------------------------------------------------------------- actions */
+
+function playerOf(src) {
+  return ((data.snapshot || {}).players || []).find((player) => player.src === Number(src));
+}
+
+async function send(body, label) {
+  const result = await api('/servers/' + SERVER + '/commands', body);
+  note(msg, result.ok
+    ? label + ' queued. The server picks it up on its next poll, within a few seconds.'
+    : result.error, result.ok ? 'good' : 'bad');
+  setTimeout(() => load(true), 2500);
+  return result.ok;
+}
+
+function reasonDialog(title, warning, onConfirm, extraHtml) {
+  Modal.show(
+    '<h2>' + escapeHtml(title) + '</h2>' +
+    (warning ? '<div class="notice" style="margin:14px 0">' + warning + '</div>' : '') +
+    (extraHtml || '') +
+    '<div class="form-stack"><label>Reason (shown to the player)' +
+    '<input id="reason" maxlength="200" placeholder="Why is this happening?"></label></div>' +
+    '<div id="out"></div>' +
+    '<div class="button-row" style="justify-content:flex-end;margin-top:14px">' +
+    '<button class="button small" id="cancel">Cancel</button>' +
+    '<button class="button light small" id="go">Confirm</button></div>',
+    (node) => {
+      node.querySelector('#cancel').addEventListener('click', () => Modal.close());
+      node.querySelector('#go').addEventListener('click', async (event) => {
+        const reason = node.querySelector('#reason').value.trim();
+        if (reason.length < 3) {
+          node.querySelector('#out').innerHTML =
+            '<p class="form-message bad">A reason of at least 3 characters is required.</p>';
+          return;
+        }
+        event.target.disabled = true;
+        await onConfirm(reason, node);
+        Modal.close();
+      });
+    }
+  );
+}
+
+document.addEventListener('click', async (event) => {
+  const link = event.target.closest('.sidebar-link[data-tab]');
+  if (link) {
+    tab = link.dataset.tab;
+    sessionStorage.setItem('nx_tab_' + SERVER, tab);
+    document.getElementById('sidebar').classList.remove('mobile-open');
+    return render();
+  }
+  if (event.target.closest('#menu')) {
+    return document.getElementById('sidebar').classList.toggle('mobile-open');
+  }
+  if (event.target.closest('#livetoggle')) {
+    live = !live;
+    document.getElementById('livelabel').textContent = live ? 'Live' : 'Paused';
+    document.getElementById('livedot').style.opacity = live ? '1' : '0.25';
+    return;
+  }
+
+  const action = event.target.closest('[data-act]');
+  if (action) {
+    const player = playerOf(action.dataset.src);
+    if (!player) return note(msg, 'That player is no longer connected.', 'bad');
+    const base = { target: player.src, session: player.sessionKey };
+    const act = action.dataset.act;
+
+    if (act === 'screenshot') {
+      return void send({ type: 'screenshot', ...base, reason: 'Staff screenshot request' },
+        'Screenshot of ' + player.name);
+    }
+    if (act === 'freeze') {
+      const on = action.dataset.on === 'true';
+      return reasonDialog((on ? 'Freeze ' : 'Unfreeze ') + player.name, '',
+        (reason) => send({ type: 'freeze', ...base, on, reason }, on ? 'Freeze' : 'Unfreeze'));
+    }
+    if (act === 'kick') {
+      return reasonDialog('Kick ' + player.name, 'They can reconnect immediately.',
+        (reason) => send({ type: 'kick', ...base, reason }, 'Kick'));
+    }
+    if (act === 'ban') {
+      return reasonDialog('Ban ' + player.name,
+        'Review the evidence first. A ban is recorded against their identifiers.',
+        (reason, node) => send({ type: 'ban', ...base, reason,
+          days: Math.max(0, parseInt(node.querySelector('#days').value, 10) || 0) }, 'Ban'),
+        '<div class="form-stack"><label>Length in days (0 = permanent)' +
+        '<input id="days" type="number" min="0" max="3650" value="0"></label></div>');
+    }
+  }
+
+  const unban = event.target.closest('[data-unban]');
+  if (unban) {
+    return reasonDialog('Lift this ban?', '',
+      (reason) => send({ type: 'unban', identifier: unban.dataset.unban, reason }, 'Unban'));
+  }
+
+  const openCase = event.target.closest('[data-case]');
+  if (openCase) {
+    const item = data.evidence[Number(openCase.dataset.case)];
+    if (!item) return;
+    const shots = [];
+    for (let slot = 0; slot < (item.images || 0); slot++) {
+      const url = '/api/control/servers/' + SERVER + '/media/' +
+        encodeURIComponent(item.id) + '/' + slot;
+      shots.push('<a href="' + url + '" target="_blank" rel="noopener">' +
+        '<img src="' + url + '" alt="screenshot ' + (slot + 1) + '"></a>');
+    }
+    const signals = (item.signals || []).map((signal) =>
+      '<tr><td><b>' + escapeHtml(signal.kind || '') + '</b></td>' +
+      '<td><span class="badge danger">+' + num(signal.weight) + '</span></td>' +
+      '<td class="muted">' + escapeHtml(short(signal.detail, 70)) + '</td></tr>').join('');
+    Modal.show(
+      '<span class="eyebrow">EVIDENCE</span>' +
+      '<h2>' + escapeHtml(item.detection || 'Case') + '</h2>' +
+      '<p class="muted mono">' + escapeHtml(item.resourceId || item.id) + ' · ' +
+        escapeHtml(item.detector || '') + ' · ' + num(item.confidence) + '% · ' +
+        escapeHtml(item.action || 'logged') + ' · ' + escapeHtml(ago(item.at, data.serverTime)) + '</p>' +
+      (shots.length ? '<div class="evidence-preview">' + shots.join('') + '</div>'
+        : '<div class="notice">No screenshot: ' +
+          escapeHtml((item.screenshot || {}).status || 'not captured') +
+          '. A failed capture is recorded as failed, never as guilt.</div>') +
+      (signals ? '<h3 style="margin:18px 0 8px">Signals</h3><div class="table-scroll"><table>' +
+        '<tbody>' + signals + '</tbody></table></div>' : '') +
+      '<h3 style="margin:18px 0 8px">Detail</h3>' +
+      '<div class="code-block"><pre>' +
+        escapeHtml(JSON.stringify(item.detail || {}, null, 2)) + '</pre></div>' +
+      '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
+      '<button class="button light small" id="close">Close</button></div>',
+      (node) => node.querySelector('#close').addEventListener('click', () => Modal.close())
+    );
+    return;
+  }
+
+  const toggle = event.target.closest('[data-setting][data-kind="boolean"]');
+  if (toggle) {
+    const path = toggle.dataset.setting;
+    const settings = ((data.snapshot || {}).config || {}).settings || {};
+    const current = settings[path];
+    if (!current) return;
+    const ok = await send({ type: 'setting', path, value: !current.value,
+                            expected: current.value }, path);
+    if (ok) toggle.classList.toggle('on');
+  }
+});
+
+document.addEventListener('change', async (event) => {
+  const target = event.target;
+
+  const detectorId = target.dataset.detector;
+  if (detectorId) {
+    return void send({ type: 'detector', detector: detectorId, mode: target.value,
+                       expected: target.dataset.expected }, detectorId);
+  }
+
+  const path = target.dataset.setting;
+  if (path && target.dataset.kind !== 'boolean') {
+    const settings = ((data.snapshot || {}).config || {}).settings || {};
+    const current = settings[path];
+    if (!current) return;
+    let value = target.value;
+    if (typeof current.value === 'number') {
+      value = Number(value);
+      if (!isFinite(value)) return note(msg, 'That value is not a number.', 'bad');
+    }
+    await send({ type: 'setting', path, value, expected: current.value }, path);
+  }
+});
+
+load(true);
+setInterval(() => { if (live && !busy()) load(false); }, 4000);
+</script>
+{% endblock %}

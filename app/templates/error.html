@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} — NexusAC{% endblock %}
+{% block body %}
+<main id="main" class="page-hero">
+  <span class="eyebrow">ERROR {{ status }}</span>
+  <h1>Something stopped here.</h1>
+  <p>{{ message }}</p>
+  <div class="hero-actions">
+    <a class="button light" href="/">Back to the website</a>
+    <a class="button" href="/dashboard">Open the dashboard</a>
+  </div>
+</main>
+{% endblock %}

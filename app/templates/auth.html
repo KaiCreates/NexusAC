@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ "Create your NexusAC account" if mode == "register" else "Sign in to NexusAC" }}{% endblock %}
+{% block chrome %}{% endblock %}
+{% block foot %}{% endblock %}
+{% block body %}
+<main id="main" class="auth-page">
+  <section class="auth-story">
+    {{ ui.brand() }}
+    <div>
+      <span class="eyebrow">YOUR COMMUNITY. PROTECTED.</span>
+      <h1>
+        Great communities<br>deserve a<br><span class="muted">fair playing field.</span>
+      </h1>
+      <p>One workspace for your servers,<br>your people, and your peace of mind.</p>
+      <div class="auth-assurance">
+        {{ ui.icon('shield-check', 18) }} NexusAC · FiveM security platform
+      </div>
+    </div>
+    <a href="/" class="text-link">← Back to website</a>
+  </section>
+
+  <section class="auth-form-wrap">
+    <div class="auth-form">
+      <span class="eyebrow">NEXUSAC WORKSPACE</span>
+      <h2>{{ "Build your next chapter." if mode == "register" else "Welcome back." }}</h2>
+      <p>
+        {{ "Create an account for your community." if mode == "register"
+           else "Sign in to your security workspace." }}
+      </p>
+
+      {% if mode == "register" and confirm_required %}
+      <div class="notice">
+        {{ ui.icon('lock', 17) }} Email confirmation is on for this project. After signing up,
+        click the link Supabase emails you before signing in.
+      </div>
+      {% endif %}
+
+      <form class="form-stack" id="form" autocomplete="on">
+        {% if mode == "register" %}
+        <label>
+          Display name
+          <input id="name" name="name" autocomplete="name" placeholder="Your name" maxlength="80">
+        </label>
+        {% endif %}
+        <label>
+          Email address
+          <input id="email" name="email" type="email" autocomplete="email"
+                 placeholder="you@community.com" required>
+        </label>
+        <label>
+          Password
+          <div class="password-field">
+            <input id="password" name="password" type="password" minlength="12" required
+                   placeholder="At least 12 characters"
+                   autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}">
+            <button type="button" class="icon-button" id="peek" aria-label="Show password">
+              {{ ui.icon('eye', 16) }}
+            </button>
+          </div>
+        </label>
+        <button type="submit" class="button light">
+          {{ "Create account" if mode == "register" else "Sign in" }} {{ ui.icon('arrow-up-right', 16) }}
+        </button>
+        <p role="status" class="form-message" id="msg" hidden></p>
+      </form>
+
+      <div class="auth-divider"><span>OR</span></div>
+      <a class="button auth-demo" href="/docs">
+        See how it connects {{ ui.icon('arrow-up-right', 15) }}
+      </a>
+
+      <p class="auth-switch">
+        {{ "Already have an account?" if mode == "register" else "New to NexusAC?" }}
+        <a href="{{ '/login' if mode == 'register' else '/register' }}">
+          {{ "Sign in" if mode == "register" else "Create an account" }}
+        </a>
+        {% if mode != "register" %} · <a href="#" id="forgot">Forgot password</a>{% endif %}
+      </p>
+    </div>
+  </section>
+</main>
+{% endblock %}
+
+{% block script %}
+<script>
+const MODE = {{ mode | tojson }};
+const form = document.getElementById('form');
+const msg = document.getElementById('msg');
+const next = new URLSearchParams(location.search).get('next') || '/dashboard';
+
+const peek = document.getElementById('peek');
+peek.addEventListener('click', () => {
+  const field = document.getElementById('password');
+  field.type = field.type === 'password' ? 'text' : 'password';
+  peek.setAttribute('aria-label', field.type === 'password' ? 'Show password' : 'Hide password');
+});
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = form.querySelector('button[type=submit]');
+  button.disabled = true;
+  const body = { email: form.email.value.trim(), password: form.password.value };
+  if (MODE === 'register') body.name = form.name.value.trim();
+
+  const result = await api('/auth/' + MODE, body);
+  button.disabled = false;
+  if (!result.ok) return note(msg, result.error, 'bad');
+  if (result.data.confirm) return note(msg, result.data.message, '');
+  location.href = next;
+});
+
+const forgot = document.getElementById('forgot');
+if (forgot) forgot.addEventListener('click', async (event) => {
+  event.preventDefault();
+  const email = form.email.value.trim();
+  if (!email) return note(msg, 'Enter your email address first, then press Forgot password.', 'bad');
+  const result = await api('/reset', { email });
+  note(msg, result.ok ? result.data.message : result.error, result.ok ? '' : 'bad');
+});
+</script>
+{% endblock %}
