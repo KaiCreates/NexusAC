@@ -130,3 +130,23 @@ async def server_page(request: Request, server_id: str):
 @app.get("/docs", response_class=HTMLResponse)
 async def docs(request: Request):
     return _page(request, "docs.html", app_url=config.APP_URL)
+
+
+# The interactive demo. Simulated data only, generated in the browser — it never
+# touches the database, and needs no account.
+DEMO_SECTIONS = (
+    "overview", "servers", "players", "detections", "bans", "screenshots",
+    "protection", "events", "logs", "staff", "integrations", "license", "settings",
+)
+
+
+@app.get("/demo", response_class=HTMLResponse)
+async def demo(request: Request):
+    return _page(request, "demo.html", section="overview")
+
+
+@app.get("/demo/{section}", response_class=HTMLResponse)
+async def demo_section(request: Request, section: str):
+    if section not in DEMO_SECTIONS:
+        raise HttpError(404, "That demo section does not exist.")
+    return _page(request, "demo.html", section=section)

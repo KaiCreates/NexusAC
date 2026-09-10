@@ -14,6 +14,24 @@ def check(name, ok, detail=""):
     (passed if ok else failed).append(name)
     print(("  PASS  " if ok else "  FAIL  ") + name + (("  -> " + str(detail)[:200]) if detail and not ok else ""))
 
+print("\n== icons ==")
+# A name with no path renders as an empty <svg>: no error, just a missing glyph
+# and text that no longer lines up. Both icon maps are checked against use.
+import pathlib, re
+_root = pathlib.Path(__file__).resolve().parent.parent
+_macro = (_root / "app" / "templates" / "_icons.html").read_text(encoding="utf-8")
+_defined = set(re.findall(r"^  '([a-z-]+)':", _macro, re.M))
+_used = set()
+for _tpl in (_root / "app" / "templates").glob("*.html"):
+    _used |= set(re.findall(r"ui\.icon\('([a-z-]+)'", _tpl.read_text(encoding="utf-8")))
+check("every template icon is defined", not (_used - _defined), sorted(_used - _defined))
+
+_js = (_root / "app" / "static" / "app.js").read_text(encoding="utf-8")
+_js_defined = set(re.findall(r"^  '([a-z-]+)':", _js, re.M))
+_js_used = set(re.findall(r"\bicon\('([a-z-]+)'", (_root / "app" / "static" / "demo.js").read_text(encoding="utf-8")))
+_js_used |= set(re.findall(r"ICONS\.([a-z]+)", _js + (_root / "app" / "static" / "demo.js").read_text(encoding="utf-8")))
+check("every scripted icon is defined", not (_js_used - _js_defined), sorted(_js_used - _js_defined))
+
 site = httpx.Client(base_url=SITE, timeout=40, headers={"Origin": SITE})
 site.post("/api/control/auth/register", json={"email": EMAIL, "password": PASSWORD, "name": "Kai"})
 r = site.post("/api/control/servers", json={"name": "Trinidad RP - main"})

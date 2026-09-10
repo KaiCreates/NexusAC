@@ -50,6 +50,33 @@ set nexus_web_token "the-43-character-key"
 `server/sv_web.lua` needs no changes; it already speaks this protocol. It accepts
 an `https://` origin, or `http://` only on localhost.
 
+## Two dashboards
+
+**`/demo`** — the interactive live demo, ported from the Next.js build's
+`components/dashboard.tsx` and `lib/demo.ts`. All thirteen sections (overview with
+the activity chart, servers, players, detections, bans, screenshots, Protection
+Center, Event Protection, logs, staff, integrations, license, settings), the
+simulated 5-second activity feed, the investigation and configuration drawers.
+Needs no account and never calls the API — the state lives in the page and resets
+on reload. It is what someone sees before they sign up.
+
+**`/dashboard`** — the real thing, backed by the live bridge. Sign in, add a
+server, and its console gives you:
+
+| Tab | What it does |
+|---|---|
+| Overview | mode, uptime, players, entity counters, registry, webhook health |
+| Players | live roster with risk, ping, lifecycle, ped, HP/armour — kick, ban, freeze, screenshot |
+| Detections | the live signal feed with weight and running risk |
+| Detectors | every detector's maturity and mode; switch between disabled / observe / enforce |
+| Bans | the ban list with linked evidence; unban from here |
+| Evidence | cases with detector, confidence, signals and screenshots |
+| Logs | everything the resource recorded |
+| Configuration | the whitelisted settings schema, edited in place |
+
+Configuration edits and detector changes are queued as commands carrying the value
+the page is showing, so a stale page cannot overwrite a newer value on the server.
+
 ## Deploying to Render
 
 1. Push this repository, then at render.com choose **New → Blueprint** and pick it.
@@ -144,8 +171,11 @@ In `tests/`. They need `lupa` (for the Lua suite) and `playwright` (for the brow
 - `realbridge.py` — 14 checks that load the **real** `server/sv_web.lua` under
   lupa with a stubbed FiveM runtime and let it drive this site over real HTTP:
   sync, command dispatch, execution, receipt persistence, acknowledgement.
-- `uicheck.py` — 19 checks in Chromium asserting every page renders real data and
-  throws no JavaScript errors.
+- `uicheck.py` — 21 checks in Chromium asserting every page renders real data,
+  every icon name resolves, and no page throws a JavaScript error.
+- `democheck.py` — 45 checks driving the live demo: all thirteen sections, deep
+  links, drawers, search, filters, server switching, ban revocation, event and
+  staff editing, reset, and that it never calls the real API.
 
 Run them with the site up:
 
@@ -153,6 +183,7 @@ Run them with the site up:
 python tests/e2e.py        http://localhost:3000
 python tests/realbridge.py http://localhost:3000
 python tests/uicheck.py    http://localhost:3000
+python tests/democheck.py  http://localhost:3000
 ```
 
 `realbridge.py` takes the resource folder as a second argument; it defaults to
