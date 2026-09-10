@@ -194,9 +194,22 @@ with sync_playwright() as p:
     page.click("dialog.drawer #done")
     page.wait_for_timeout(1200)
 
-    # Rotation goes confirm-drawer -> key-drawer, the same chained pattern.
-    page.locator("[data-rotate][data-name='Key Reveal Test']").click()
-    page.wait_for_timeout(500)
+    # The Connection panel on the card: how you get back to the setup later.
+    page.locator("[data-connect]").last.click()
+    page.wait_for_timeout(700)
+    panel = page.inner_text("dialog.drawer")
+    check("connection panel opens from the server card", "server.cfg" in panel, panel[:150])
+    check("it shows the website URL", SITE in page.inner_text("dialog.drawer #url-value"))
+    check("it says plainly that the key cannot be shown again",
+          "SHA-256" in panel and "hidden" in panel, panel[:200])
+    check("it offers copy buttons", page.locator("dialog.drawer #copy-url").count() == 1
+          and page.locator("dialog.drawer #copy-config").count() == 1)
+
+    # Rotation chains connection-drawer -> confirm-drawer -> key-drawer.
+    page.locator("dialog.drawer #rotate-now").click()
+    page.wait_for_timeout(600)
+    check("rotate asks for confirmation first",
+          "stops working immediately" in page.inner_text("dialog.drawer"))
     page.locator("dialog.drawer #go").click()
     page.wait_for_timeout(1800)
     rotated = page.inner_text("dialog.drawer #key-value").strip() if page.locator(

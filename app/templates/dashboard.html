@@ -98,9 +98,8 @@ function viewServers() {
       '</div>' +
       '<div class="button-row">' +
         '<a class="button light small" href="/dashboard/servers/' + server.id + '">Open console</a>' +
-        (owner ? '<button class="button small" data-rotate="' + server.id + '" data-name="' +
-                   escapeHtml(server.name) + '">Rotate key</button>' +
-                 '<button class="button small" data-remove="' + server.id + '" data-name="' +
+        '<button class="button small" data-connect="' + server.id + '">Connection</button>' +
+        (owner ? '<button class="button small" data-remove="' + server.id + '" data-name="' +
                    escapeHtml(server.name) + '">Remove</button>' : '') +
       '</div></article>';
   }).join('') + '</div>';
@@ -205,6 +204,80 @@ function keyDialog(title, token) {
     },
     'NEXUSAC / SERVER KEY', title
   );
+}
+
+/* Everything about getting this server talking to the site, in one place. The key
+   itself cannot be shown again -- only its SHA-256 is stored -- so the honest
+   thing is to say so and put the recovery path (rotate) right here. */
+function connectionDialog(id) {
+  const target = state.servers.find((s) => s.id === id);
+  if (!target) return;
+  const owner = state.user.role === 'owner';
+  const masked = (target.hint || '') + '…'.repeat(1) + ' (hidden)';
+  const config = 'set nexus_web_url "' + location.origin + '"\n' +
+                 'set nexus_web_token "YOUR-43-CHARACTER-KEY"';
+
+  Modal.show(
+    '<div class="button-row" style="margin-bottom:18px">' +
+    '<span class="badge ' + (target.online ? 'success' : 'danger') + '">' +
+    '<span class="status-dot"></span> ' + (target.online ? 'Reporting' : 'Offline') + '</span>' +
+    '<span class="badge">last seen ' + escapeHtml(ago(target.lastSeen, state.serverTime)) + '</span>' +
+    '</div>' +
+
+    '<label style="display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;' +
+    'color:#73737c;margin-bottom:7px">Website URL</label>' +
+    '<div class="key-reveal" style="font-size:13px" id="url-value">' +
+    escapeHtml(location.origin) + '</div>' +
+    '<div class="button-row" style="margin:10px 0 22px">' +
+    '<button class="button small" id="copy-url">Copy URL</button></div>' +
+
+    '<label style="display:block;font-size:10px;letter-spacing:.09em;text-transform:uppercase;' +
+    'color:#73737c;margin-bottom:7px">API key</label>' +
+    '<div class="key-reveal" style="font-size:13px;color:#8a8a95">' + escapeHtml(masked) + '</div>' +
+    '<div class="notice" style="margin:10px 0 22px">The key is stored only as a SHA-256 hash, so ' +
+    'nobody — including this website — can show it to you again. That is what stops a leak of this ' +
+    'database from handing out working keys. Lost it? Rotate below and paste the new one.</div>' +
+
+    '<h3 style="margin-bottom:8px">server.cfg</h3>' +
+    '<p class="muted" style="font-size:12px;margin-bottom:10px">Both lines go above ' +
+    '<code>ensure NexusAC</code>, then run <code>restart NexusAC</code>.</p>' +
+    '<div class="code-block"><pre>' + escapeHtml(config) + '</pre></div>' +
+
+    '<div class="button-row" style="justify-content:space-between;margin-top:20px">' +
+    '<button class="button small" id="copy-config">Copy config</button>' +
+    (owner ? '<button class="button light small" id="rotate-now">Rotate key</button>'
+           : '<span class="muted" style="font-size:11px">Only the owner can rotate</span>') +
+    '</div>',
+
+    (node) => {
+      const flash = async (button, text, label) => {
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = 'Copied';
+          setTimeout(() => { button.textContent = label; }, 2000);
+        } catch (error) { button.textContent = 'Press Ctrl+C'; }
+      };
+      node.querySelector('#copy-url').addEventListener('click', (event) =>
+        flash(event.target, location.origin, 'Copy URL'));
+      node.querySelector('#copy-config').addEventListener('click', (event) =>
+        flash(event.target, config, 'Copy config'));
+      const rotate = node.querySelector('#rotate-now');
+      if (rotate) rotate.addEventListener('click', () =>
+        rotateDialog(target.id, target.name));
+    },
+    'NEXUSAC / CONNECTION', target.name
+  );
+}
+
+function rotateDialog(id, name) {
+  confirmDialog('Rotate the key for ' + name + '?',
+    'The current key stops working immediately. The server shows offline here until you paste the ' +
+    'new one into server.cfg and restart the resource. Any queued command is cancelled.',
+    'Rotate', async () => {
+      const result = await api('/servers/' + id + '/rotate', {});
+      if (result.ok) keyDialog('New key for ' + name, result.data.token);
+      else { Modal.close(); note(msg, result.error, 'bad'); }
+    });
 }
 
 function addServerDialog() {
@@ -347,18 +420,11 @@ document.addEventListener('click', async (event) => {
   const menu = event.target.closest('#menu');
   if (menu) return document.getElementById('sidebar').classList.toggle('mobile-open');
 
+  const connect = event.target.closest('[data-connect]');
+  if (connect) return connectionDialog(connect.dataset.connect);
+
   const rotate = event.target.closest('[data-rotate]');
-  if (rotate) {
-    const { rotate: id, name } = rotate.dataset;
-    return confirmDialog('Rotate the key for ' + name + '?',
-      'The current key stops working immediately. The server shows offline here until you paste ' +
-      'the new one into server.cfg and restart the resource. Any queued command is cancelled.',
-      'Rotate', async () => {
-        const result = await api('/servers/' + id + '/rotate', {});
-        if (result.ok) keyDialog('New key for ' + name, result.data.token);
-        else { Modal.close(); note(msg, result.error, 'bad'); }
-      });
-  }
+  if (rotate) return rotateDialog(rotate.dataset.rotate, rotate.dataset.name);
 
   const remove = event.target.closest('[data-remove]');
   if (remove) {

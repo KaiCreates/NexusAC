@@ -39,8 +39,8 @@ database, so neither belongs in a commit or a screenshot.
 ## Connecting the anti-cheat
 
 Sign up, press **Add server**, name it. You get a 43-character API key, shown
-once — only its SHA-256 hash is stored. Then in `server.cfg`, above
-`ensure NexusAC`:
+once — only its SHA-256 hash is stored, so a leak of this database hands out no
+working keys. Then in `server.cfg`, above `ensure NexusAC`:
 
 ```
 set nexus_web_url "https://your-site.vercel.app"
@@ -49,6 +49,10 @@ set nexus_web_token "the-43-character-key"
 
 `server/sv_web.lua` needs no changes; it already speaks this protocol. It accepts
 an `https://` origin, or `http://` only on localhost.
+
+Each server card has a **Connection** panel with the website URL, the config
+lines and the key's first characters. The key itself is never shown again — if
+it is lost, **Rotate key** in that panel issues a new one and reveals it once.
 
 ## Two dashboards
 
