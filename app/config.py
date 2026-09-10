@@ -8,7 +8,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv() -> None:
-    """Load .env when running locally. Vercel injects real environment variables,
+    """Load .env when running locally. Hosts inject real environment variables,
     so this is a no-op there."""
     path = _ROOT / ".env"
     if not path.exists():
@@ -25,14 +25,34 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
+def _where() -> str:
+    """Name the place the operator actually has to go, so a boot failure in a
+    hosting log is directly actionable."""
+    if os.environ.get("RENDER"):
+        return "Render -> your service -> Environment"
+    if os.environ.get("VERCEL"):
+        return "Vercel -> Settings -> Environment Variables"
+    return "your .env file (copy .env.example to .env)"
+
+
+_REQUIRED = ("SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "DATABASE_URL")
+_missing = [name for name in _REQUIRED if not os.environ.get(name, "").strip()]
+if _missing:
+    # Report every missing variable at once. Failing on the first one costs a
+    # whole redeploy cycle per variable, which on a hosted service is minutes
+    # each and reads like the fix did not work.
+    raise RuntimeError(
+        "NexusAC is not configured. Missing: "
+        + ", ".join(_missing)
+        + f". Set {'it' if len(_missing) == 1 else 'them'} in "
+        + _where()
+        + ". APP_URL should also be this site's public URL, or sign-in is "
+          "rejected by the origin check (Render supplies it automatically)."
+    )
+
+
 def _require(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise RuntimeError(
-            f"{name} is not set. Copy .env.example to .env (local) or add it in "
-            f"Vercel -> Settings -> Environment Variables (production)."
-        )
-    return value
+    return os.environ[name].strip()
 
 
 SUPABASE_URL = _require("SUPABASE_URL").rstrip("/")
@@ -44,8 +64,14 @@ SUPABASE_JWKS_URL = os.environ.get(
 DATABASE_URL = _require("DATABASE_URL")
 
 # Public origin of this website. Used for the CSRF origin check and for the
-# redirect target in confirmation emails.
-APP_URL = os.environ.get("APP_URL", "http://localhost:3000").rstrip("/")
+# redirect target in confirmation emails. Render publishes the service's own URL,
+# so falling back to it means a deploy works before anyone sets APP_URL by hand;
+# an explicit APP_URL still wins, which is what a custom domain needs.
+APP_URL = (
+    os.environ.get("APP_URL")
+    or os.environ.get("RENDER_EXTERNAL_URL")
+    or "http://localhost:3000"
+).rstrip("/")
 
 # Supabase projects ship with email confirmation ON and a heavily rate-limited
 # default mail sender (a handful of messages an hour), which makes sign-up look
@@ -58,4 +84,8 @@ REQUIRE_EMAIL_CONFIRMATION = os.environ.get(
 
 SESSION_COOKIE = "nexus_session"
 SESSION_TTL = 7 * 24 * 3600
-IS_PRODUCTION = bool(os.environ.get("VERCEL")) or APP_URL.startswith("https://")
+IS_PRODUCTION = (
+    bool(os.environ.get("VERCEL"))
+    or bool(os.environ.get("RENDER"))
+    or APP_URL.startswith("https://")
+)
