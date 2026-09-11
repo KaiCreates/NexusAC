@@ -3464,3 +3464,132 @@ table td .muted { font-size: 11px; }
   word-break: break-all;
   user-select: all;
 }
+
+/* ---------------------------------------------------------------------------
+   Configuration: one card per module instead of one long table.
+   --------------------------------------------------------------------------- */
+
+.cfg-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.cfg-search { min-width: 260px; flex: 1; max-width: 420px; }
+.cfg-actions { display: flex; align-items: center; gap: 8px; }
+.cfg-actions .button { display: inline-flex; align-items: center; gap: 6px; }
+.cfg-tabs { margin-bottom: 18px; }
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.cfg-card { padding: 0; overflow: hidden; }
+.cfg-card-head {
+  display: flex; align-items: center; gap: 11px;
+  padding: 15px 16px; border-bottom: 1px solid var(--border);
+}
+.cfg-card-head b { font-size: 13px; font-weight: 500; display: block; }
+.cfg-card-head small { font-size: 10.5px; color: #72727d; }
+
+.cfg-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 11px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, .045);
+  transition: background 140ms;
+}
+.cfg-card .cfg-row:last-child { border-bottom: 0; }
+.cfg-row:hover { background: rgba(255, 255, 255, .022); }
+/* A staged edit is marked on its own row only, never by recolouring the card. */
+.cfg-row.staged { background: rgba(255, 255, 255, .045); box-shadow: inset 2px 0 0 #fff; }
+
+.cfg-label { min-width: 0; }
+.cfg-label b { font-size: 12.5px; font-weight: 500; display: block; }
+.cfg-label small {
+  font-size: 10.5px; color: #6d6d78; display: block; margin-top: 2px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.cfg-control { flex-shrink: 0; display: flex; align-items: center; }
+.cfg-control select { width: auto; min-width: 112px; padding: 5px 8px; font-size: 12px; }
+.cfg-input { width: 150px; padding: 5px 9px; font-size: 12px; }
+.cfg-input.cfg-num { width: 92px; }
+.cfg-readonly {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px; color: #8a8a95;
+}
+
+/* ---------------------------------------------------------------------------
+   Screenshots: its own section — a rail of who you can capture, then the wall.
+   --------------------------------------------------------------------------- */
+
+.shot-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 14px; align-items: start; }
+.shot-rail {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; position: sticky; top: 16px;
+}
+.shot-rail-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 15px; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.shot-rail-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 15px; border-bottom: 1px solid rgba(255, 255, 255, .045);
+}
+.shot-rail-row:last-child { border-bottom: 0; }
+.shot-rail-row:hover { background: rgba(255, 255, 255, .03); }
+.shot-rail-empty { padding: 22px 15px; color: #72727d; font-size: 11.5px; }
+
+.shot-main { padding: 0; }
+.shot-main .panel-heading { padding: 15px 17px; border-bottom: 1px solid var(--border); }
+.shot-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px; padding: 15px;
+}
+.shot-tile {
+  padding: 0; text-align: left; border: 1px solid var(--border); border-radius: 7px;
+  overflow: hidden; background: #0c0c0f; cursor: pointer; transition: border-color 140ms;
+}
+.shot-tile:hover { border-color: #4a4a55; }
+.shot-tile img { display: block; width: 100%; height: 140px; object-fit: cover; background: #141418; }
+.shot-meta { padding: 10px 12px; }
+.shot-meta b { font-size: 12px; font-weight: 500; display: block; }
+.shot-meta small { font-size: 10.5px; color: #72727d; }
+.shot-full img { width: 100%; border-radius: 7px; border: 1px solid var(--border); }
+
+@media (max-width: 900px) {
+  .shot-layout { grid-template-columns: minmax(0, 1fr); }
+  .shot-rail { position: static; }
+}
+
+/* Workspace switcher rows. */
+.ws-list { display: grid; gap: 8px; }
+.ws-row {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 12px 13px; border: 1px solid var(--border); border-radius: 7px;
+  background: transparent; transition: border-color 140ms, background 140ms;
+}
+.ws-row:hover:not(:disabled) { border-color: #4a4a55; background: rgba(255, 255, 255, .03); }
+.ws-row.current { border-color: #4a4a55; background: rgba(255, 255, 255, .045); opacity: 1; }
+.ws-row:disabled { cursor: default; }
+.ws-row b { font-size: 13px; font-weight: 500; display: block; }
+.ws-row small { font-size: 10.5px; color: #72727d; }
+
+/* Name over id in the capture rail; without this they run together ("MarcusID 3"). */
+.shot-rail-row .player-cell { gap: 9px; min-width: 0; }
+.shot-rail-row .player-cell b { display: block; font-size: 12.5px; font-weight: 500; }
+.shot-rail-row .player-cell small { display: block; font-size: 10.5px; color: #72727d; }
+
+/* Attempts that produced no image. Visible, and labelled with why. */
+.shot-pending-list { padding: 4px 0; }
+.shot-pending {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 11px 17px; border-bottom: 1px solid rgba(255, 255, 255, .045);
+}
+.shot-pending:last-child { border-bottom: 0; }
+.shot-pending.bad { box-shadow: inset 2px 0 0 #d8656f; }
+.shot-pending b { font-size: 12.5px; font-weight: 500; display: block; }
+.shot-pending small { font-size: 10.5px; color: #72727d; }
+.shot-pending-why { grid-column: 1 / -1; font-size: 11px; color: #8a8a95; }
+.notice.bad { border-color: rgba(216, 101, 111, .35); color: #e7b3b9; }
+.notice.bad code { color: #fff; }

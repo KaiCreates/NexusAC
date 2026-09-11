@@ -21,6 +21,9 @@
       <button class="sidebar-link" data-tab="Bans">{{ ui.icon('ban') }} Bans</button>
       <button class="sidebar-link" data-tab="Evidence">{{ ui.icon('camera') }} Evidence
         <span class="count" id="count-evidence"></span></button>
+      <span class="nav-group">MEDIA</span>
+      <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} Screenshots
+        <span class="count" id="count-shots"></span></button>
       <span class="nav-group">MANAGEMENT</span>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} Logs</button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} Configuration</button>
@@ -78,7 +81,8 @@
 <script>
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
-const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence', 'Logs', 'Configuration'];
+const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
+              'Screenshots', 'Logs', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -292,54 +296,236 @@ function viewLogs() {
       'Nothing logged yet', 'Everything the resource records is routed through here first.'));
 }
 
+/* Screenshots is its own section, not a column inside Evidence: reviewing what a
+   player's screen actually showed is a different job from reading a case file.
+   Left rail lists who you can capture; the main area is the gallery. */
+
+function viewScreenshots() {
+  const shots = [];
+  const pending = [];
+  for (const item of (data.evidence || [])) {
+    const images = item.images || 0;
+    for (let slot = 0; slot < images; slot++) shots.push({ item, slot });
+    // A capture that was asked for but produced no image must still be visible:
+    // "nothing here" and "it failed" are different answers to the same question.
+    if (!images) pending.push(item);
+  }
+  const can = ['owner', 'administrator', 'moderator'].includes(data.role);
+  const players = ((data.snapshot || {}).players || []);
+  const screensState = ((data.snapshot || {}).integrations || {}).screenshots;
+
+  // The single most common reason no screenshot ever appears.
+  const integration = screensState === 'started' ? '' :
+    '<div class="notice bad" style="margin-bottom:14px"><b>Nexus-Screens is ' +
+    escapeHtml(screensState || 'not reporting') + '.</b> Screenshots cannot be captured without ' +
+    'it — NexusAC keeps protecting the server and records each attempt as unavailable. ' +
+    'Add <code>ensure Nexus-Screens</code> to server.cfg above <code>ensure NexusAC</code>, ' +
+    'then restart both.</div>';
+
+  const STATUS_TEXT = {
+    requested: 'Requested — waiting for the client to answer',
+    unavailable: 'Unavailable — Nexus-Screens was not running',
+    skipped: 'Skipped — capture cooldown or policy',
+    failed: 'Failed — no image came back',
+    none: 'No capture was requested for this case',
+  };
+  const pendingRows = pending.map((item) => {
+    const status = (item.screenshot || {}).status || 'none';
+    return '<div class="shot-pending' + (status === 'failed' || status === 'unavailable'
+      ? ' bad' : '') + '">' +
+      '<div><b>' + escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
+      '<small>' + escapeHtml(item.detection || '—') + ' · ' +
+      escapeHtml(ago(item.at, data.serverTime)) + '</small></div>' +
+      '<span class="badge ' + (status === 'requested' ? 'warning'
+        : status === 'none' ? '' : 'danger') + '">' + escapeHtml(status) + '</span>' +
+      '<div class="shot-pending-why">' + escapeHtml(STATUS_TEXT[status] || status) + '</div></div>';
+  }).join('');
+
+  const rail =
+    '<aside class="shot-rail"><div class="shot-rail-head">' +
+    '<b>Players online</b><span class="badge">' + players.length + '</span></div>' +
+    (players.length
+      ? players.map((p) =>
+          '<div class="shot-rail-row">' +
+          '<span class="player-cell"><span class="avatar tiny">' +
+          escapeHtml((p.name || '?')[0].toUpperCase()) + '</span>' +
+          '<span><b>' + escapeHtml(p.name || '?') + '</b><small>ID ' + p.src + '</small></span></span>' +
+          (can && data.online
+            ? '<button class="icon-button" title="Request a screenshot" ' +
+              'aria-label="Request a screenshot from ' + escapeHtml(p.name || '') + '" ' +
+              'data-act="screenshot" data-src="' + p.src + '">' + icon('camera', 15) + '</button>'
+            : '') + '</div>').join('')
+      : '<div class="shot-rail-empty">Nobody is connected, so there is nobody to capture.</div>') +
+    '</aside>';
+
+  const gallery = shots.length
+    ? '<div class="shot-grid">' + shots.map(({ item, slot }) => {
+        const url = '/api/control/servers/' + SERVER + '/media/' +
+          encodeURIComponent(item.id) + '/' + slot;
+        return '<button class="shot-tile" data-shot="' + escapeHtml(item.id) + '" data-slot="' +
+          slot + '">' +
+          '<img src="' + url + '" alt="Screenshot for ' + escapeHtml(item.detection || 'case') + '" ' +
+          'loading="lazy">' +
+          '<div class="shot-meta"><b>' + escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
+          '<small>' + escapeHtml(item.detection || '—') + ' · ' +
+          escapeHtml(ago(item.at, data.serverTime)) + '</small></div></button>';
+      }).join('') + '</div>'
+    : '<div class="empty-state"><h3>No screenshots yet</h3><p>' +
+      'Press the camera next to a player to request one. It arrives on the next poll or two, ' +
+      'and every attempt is listed below whether or not it produced an image.</p></div>';
+
+  return offlineNote() + integration +
+    '<div class="shot-layout">' + rail +
+    '<div><section class="panel shot-main"><div class="panel-heading">' +
+    '<h3>Captured screenshots</h3><span class="badge">' + shots.length + '</span></div>' +
+    gallery + '</section>' +
+    (pendingRows
+      ? '<section class="panel shot-main" style="margin-top:14px">' +
+        '<div class="panel-heading"><h3>Attempts without an image</h3>' +
+        '<span class="badge">' + pending.length + '</span></div>' +
+        '<div class="shot-pending-list">' + pendingRows + '</div>' +
+        '<p class="panel-note" style="margin:0;padding:0 17px 15px">A failed capture is recorded ' +
+        'as failed, never as guilt.</p></section>'
+      : '') +
+    '</div></div>';
+}
+
+/* Configuration.
+
+   Settings arrive as flat dotted paths (risk.ban, identityguard.thresholdDeny),
+   so the prefix is the module. The page groups by it into one card per module
+   instead of listing 28 rows in a single table. Edits are staged locally and
+   sent together on Save: each change is its own command down the bridge, and
+   firing one per keystroke would flood the queue. */
+
+const CONFIG_TABS = {
+  Core: ['general', 'risk', 'heartbeat', 'panel'],
+  Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
+              'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
+              'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing'],
+  Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
+                'honeypot', 'trust', 'txadmin'],
+};
+const GROUP_ICONS = {
+  general: 'settings', risk: 'radar', heartbeat: 'activity', combat: 'scan-line',
+  godmode: 'shield-check', freecam: 'camera', playerguard: 'users', cursor: 'sliders',
+  state: 'grid', ragdoll: 'users', stamina: 'activity', weapons: 'ban', network: 'server',
+  entity: 'braces', resourceguard: 'server', chatguard: 'log', banmessage: 'ban',
+  ipbans: 'ban', identityguard: 'key', enforce: 'shield-check', evidence: 'camera',
+  log: 'log', honeypot: 'radar', panel: 'grid', griefing: 'ban', trust: 'shield-check',
+  txadmin: 'server', targeting: 'scan-line', integrity: 'shield-check', lua: 'braces',
+};
+
+let configEdits = {};
+let configTab = 'All';
+let configSearch = '';
+
+const prettyLabel = (part) => part
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/^./, (c) => c.toUpperCase());
+const groupOf = (path) => (path.includes('.') ? path.split('.')[0] : 'general');
+function tabOf(group) {
+  for (const tab of Object.keys(CONFIG_TABS)) {
+    if (CONFIG_TABS[tab].includes(group)) return tab;
+  }
+  return 'Other';
+}
+
+function settingControl(path, setting, editable) {
+  const staged = Object.prototype.hasOwnProperty.call(configEdits, path);
+  const value = staged ? configEdits[path] : setting.value;
+  if (!editable) return '<span class="cfg-readonly">' + escapeHtml(String(value)) + '</span>';
+
+  if (typeof setting.value === 'boolean') {
+    return '<button class="toggle ' + (value ? 'on' : '') + '" data-cfg="' + escapeHtml(path) +
+      '" data-kind="boolean" role="switch" aria-checked="' + (value ? 'true' : 'false') +
+      '" aria-label="' + escapeHtml(path) + '"><span></span></button>';
+  }
+  if (setting.values) {
+    return '<select data-cfg="' + escapeHtml(path) + '" data-kind="enum">' +
+      Object.keys(setting.values).map((option) => '<option value="' + escapeHtml(option) + '"' +
+        (option === value ? ' selected' : '') + '>' + escapeHtml(option) + '</option>').join('') +
+      '</select>';
+  }
+  const numeric = typeof setting.value === 'number';
+  return '<input data-cfg="' + escapeHtml(path) + '" data-kind="' +
+    (numeric ? 'number' : 'string') + '"' + (numeric ? ' type="number"' : '') +
+    (setting.lo !== undefined ? ' min="' + setting.lo + '"' : '') +
+    (setting.hi !== undefined ? ' max="' + setting.hi + '"' : '') +
+    ' value="' + escapeHtml(String(value)) + '" class="cfg-input' + (numeric ? ' cfg-num' : '') + '">';
+}
+
 function viewConfig() {
   const snap = data.snapshot || {};
   const settings = ((snap.config || {}).settings) || {};
   const editable = ['owner', 'administrator'].includes(data.role) && data.online;
-  const keys = Object.keys(settings).sort();
-  const rows = keys.map((path) => {
-    const setting = settings[path];
-    let control;
-    if (!editable) {
-      control = '<span class="muted mono">' + escapeHtml(String(setting.value)) + '</span>';
-    } else if (typeof setting.value === 'boolean') {
-      control = '<button class="toggle ' + (setting.value ? 'on' : '') + '" data-setting="' +
-        escapeHtml(path) + '" data-kind="boolean" aria-label="Toggle ' + escapeHtml(path) +
-        '"><span></span></button>';
-    } else if (setting.values) {
-      control = '<select data-setting="' + escapeHtml(path) + '" data-kind="enum">' +
-        Object.keys(setting.values).map((option) =>
-          '<option value="' + escapeHtml(option) + '"' +
-          (option === setting.value ? ' selected' : '') + '>' + escapeHtml(option) +
-          '</option>').join('') + '</select>';
-    } else {
-      control = '<input data-setting="' + escapeHtml(path) + '" data-kind="' +
-        escapeHtml(setting.kind) + '" value="' + escapeHtml(String(setting.value)) +
-        '" style="max-width:130px">';
-    }
-    const range = (setting.lo !== undefined && setting.hi !== undefined)
-      ? setting.lo + ' – ' + setting.hi : '';
-    return '<tr><td class="mono" style="word-break:break-all">' + escapeHtml(path) + '</td>' +
-      '<td>' + control + '</td>' +
-      '<td class="muted">' + escapeHtml(setting.kind || '') +
-        (range ? ' · ' + escapeHtml(range) : '') + '</td>' +
-      '<td>' + (setting.live ? '<span class="badge success">live</span>'
-        : '<span class="badge warning">needs restart</span>') + '</td></tr>';
-  });
-  return offlineNote() +
-    panel('Configuration',
-      table(['Path', 'Value', 'Type', 'Applies'], rows,
-        'No configuration schema reported', 'The server publishes its whitelisted settings here.'),
-      '<span class="badge">' + keys.length + ' settings</span>') +
-    '<p class="panel-note">Changes are queued as a command carrying the value the page currently ' +
-    'shows. If the value changed on the server in between, the anti-cheat refuses the edit instead ' +
-    'of overwriting it.</p>';
+  const paths = Object.keys(settings).sort();
+  const needle = configSearch.toLowerCase();
+
+  const groups = {};
+  for (const path of paths) {
+    if (needle && !path.toLowerCase().includes(needle)) continue;
+    const group = groupOf(path);
+    if (configTab !== 'All' && tabOf(group) !== configTab) continue;
+    (groups[group] = groups[group] || []).push(path);
+  }
+
+  const tabs = ['All'].concat(Object.keys(CONFIG_TABS))
+    .concat(paths.some((p) => tabOf(groupOf(p)) === 'Other') ? ['Other'] : []);
+  const dirty = Object.keys(configEdits).length;
+
+  const header =
+    '<div class="cfg-bar">' +
+    '<label class="search-field cfg-search">' + icon('search', 14) +
+    '<input id="cfg-search" placeholder="Search settings…" value="' + escapeHtml(configSearch) +
+    '" aria-label="Search settings"></label>' +
+    '<div class="cfg-actions">' +
+    (dirty ? '<span class="badge warning">' + dirty + ' unsaved</span>' : '') +
+    '<button class="button small" id="cfg-refresh">Refresh</button>' +
+    '<button class="button light small" id="cfg-save"' + (dirty ? '' : ' disabled') + '>' +
+    icon('check', 14) + ' Save' + (dirty ? ' (' + dirty + ')' : '') + '</button>' +
+    '</div></div>' +
+    '<div class="filter-tabs cfg-tabs">' + tabs.map((t) =>
+      '<button data-cfgtab="' + t + '"' + (t === configTab ? ' class="active"' : '') +
+      ' aria-pressed="' + (t === configTab) + '">' + t + '</button>').join('') + '</div>';
+
+  const names = Object.keys(groups).sort();
+  if (!names.length) {
+    return offlineNote() + header +
+      '<section class="panel"><div class="empty-state"><h3>Nothing here</h3><p>' +
+      (paths.length ? 'No setting matches that search.'
+                    : 'The server has not reported its configuration schema yet.') +
+      '</p></div></section>';
+  }
+
+  const cards = names.map((group) => {
+    const rows = groups[group].map((path) => {
+      const setting = settings[path];
+      const staged = Object.prototype.hasOwnProperty.call(configEdits, path);
+      const rest = path.slice(group.length + 1) || path;
+      const range = (setting.lo !== undefined && setting.hi !== undefined)
+        ? setting.lo + '–' + setting.hi : '';
+      return '<div class="cfg-row' + (staged ? ' staged' : '') + '">' +
+        '<div class="cfg-label"><b>' + escapeHtml(prettyLabel(rest)) + '</b><small>' +
+        escapeHtml(path) + (range ? ' · ' + escapeHtml(range) : '') +
+        (setting.live ? '' : ' · needs restart') + '</small></div>' +
+        '<div class="cfg-control">' + settingControl(path, setting, editable) + '</div></div>';
+    }).join('');
+    return '<section class="panel cfg-card"><div class="cfg-card-head">' +
+      '<span class="protection-icon">' + icon(GROUP_ICONS[group] || 'sliders', 17) + '</span>' +
+      '<div><b>' + escapeHtml(prettyLabel(group)) + '</b><small>' + groups[group].length +
+      ' setting' + (groups[group].length === 1 ? '' : 's') + '</small></div></div>' +
+      rows + '</section>';
+  }).join('');
+
+  return offlineNote() + header + '<div class="cfg-grid">' + cards + '</div>' +
+    (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
 }
 
 const VIEWS = {
   Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
-  Logs: viewLogs, Configuration: viewConfig,
+  Screenshots: viewScreenshots, Logs: viewLogs, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -381,6 +567,8 @@ function render() {
   const detections = ((data.snapshot || {}).feed || []).filter((e) => e.weight > 0).length;
   document.getElementById('count-detections').textContent = detections || '';
   document.getElementById('count-evidence').textContent = (data.evidence || []).length || '';
+  const shotCount = (data.evidence || []).reduce((sum, e) => sum + (e.images || 0), 0);
+  document.getElementById('count-shots').textContent = shotCount || '';
   renderStats();
   document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
     link.classList.toggle('active', link.dataset.tab === tab));
@@ -538,17 +726,99 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  const toggle = event.target.closest('[data-setting][data-kind="boolean"]');
-  if (toggle) {
-    const path = toggle.dataset.setting;
+  /* ---- configuration: stage locally, send on Save ---- */
+
+  const cfgTab = event.target.closest('[data-cfgtab]');
+  if (cfgTab) { configTab = cfgTab.dataset.cfgtab; return render(); }
+
+  if (event.target.closest('#cfg-refresh')) {
+    // Explicitly discards staged edits, so say so rather than silently dropping them.
+    if (Object.keys(configEdits).length &&
+        !confirm('Discard ' + Object.keys(configEdits).length + ' unsaved change(s) and reload '
+                 + 'the server’s current values?')) return;
+    configEdits = {};
+    note(msg, 'Reloaded from the server.', '');
+    return load(true);
+  }
+
+  const cfgToggle = event.target.closest('[data-cfg][data-kind="boolean"]');
+  if (cfgToggle) {
+    const path = cfgToggle.dataset.cfg;
     const settings = ((data.snapshot || {}).config || {}).settings || {};
-    const current = settings[path];
-    if (!current) return;
-    const ok = await send({ type: 'setting', path, value: !current.value,
-                            expected: current.value }, path);
-    if (ok) toggle.classList.toggle('on');
+    if (!settings[path]) return;
+    const next = !(Object.prototype.hasOwnProperty.call(configEdits, path)
+      ? configEdits[path] : settings[path].value);
+    stageEdit(path, next, settings[path].value);
+    return render();
+  }
+
+  if (event.target.closest('#cfg-save')) return saveConfig();
+
+  /* ---- screenshots ---- */
+
+  const tile = event.target.closest('[data-shot]');
+  if (tile) {
+    const item = (data.evidence || []).find((e) => e.id === tile.dataset.shot);
+    if (!item) return;
+    const slot = Number(tile.dataset.slot);
+    const url = '/api/control/servers/' + SERVER + '/media/' +
+      encodeURIComponent(item.id) + '/' + slot;
+    Modal.show(
+      '<p class="muted mono" style="margin-bottom:12px">' +
+      escapeHtml(item.resourceId || item.id) + ' · ' + escapeHtml(item.detector || '') + ' · ' +
+      num(item.confidence) + '% · ' + escapeHtml(ago(item.at, data.serverTime)) + '</p>' +
+      '<a href="' + url + '" target="_blank" rel="noopener" class="shot-full">' +
+      '<img src="' + url + '" alt="Screenshot"></a>' +
+      '<dl class="detail-list" style="margin-top:16px">' +
+      '<div><dt>Player</dt><dd>' + escapeHtml((item.player || {}).name || 'Unknown') + '</dd></div>' +
+      '<div><dt>Detection</dt><dd>' + escapeHtml(item.detection || '—') + '</dd></div>' +
+      '<div><dt>Action</dt><dd>' + escapeHtml(item.action || 'logged') + '</dd></div>' +
+      '<div><dt>Capture</dt><dd>' + escapeHtml((item.screenshot || {}).status || 'captured') +
+      '</dd></div></dl>' +
+      '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
+      '<a class="button small" href="' + url + '" target="_blank" rel="noopener">Open full size</a>' +
+      '<button class="button light small" data-close>Close</button></div>',
+      null, 'NEXUSAC / SCREENSHOT',
+      ((item.player || {}).name || 'Unknown') + ' · ' + (item.detection || 'Case'));
+    return;
   }
 });
+
+/* Staged edits. Setting a value back to what the server already has clears the
+   edit entirely, so "changed it and changed it back" is not sent as a command. */
+function stageEdit(path, value, serverValue) {
+  if (value === serverValue) delete configEdits[path];
+  else configEdits[path] = value;
+}
+
+async function saveConfig() {
+  const settings = ((data.snapshot || {}).config || {}).settings || {};
+  const paths = Object.keys(configEdits);
+  if (!paths.length) return;
+
+  const button = document.getElementById('cfg-save');
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+
+  let queued = 0;
+  const refused = [];
+  for (const path of paths) {
+    const setting = settings[path];
+    if (!setting) { refused.push(path + ' (no longer exists)'); continue; }
+    const result = await api('/servers/' + SERVER + '/commands', {
+      type: 'setting', path, value: configEdits[path], expected: setting.value,
+    });
+    if (result.ok) queued += 1;
+    else refused.push(path + ' — ' + result.error);
+  }
+
+  configEdits = {};
+  note(msg, refused.length
+    ? queued + ' change(s) queued, ' + refused.length + ' refused: ' + refused[0]
+    : queued + ' change(s) queued. The server applies them over the next few polls.',
+    refused.length ? 'bad' : 'good');
+  setTimeout(() => load(true), 2500);
+  render();
+}
 
 document.addEventListener('change', async (event) => {
   const target = event.target;
@@ -559,7 +829,7 @@ document.addEventListener('change', async (event) => {
                        expected: target.dataset.expected }, detectorId);
   }
 
-  const path = target.dataset.setting;
+  const path = target.dataset.cfg;
   if (path && target.dataset.kind !== 'boolean') {
     const settings = ((data.snapshot || {}).config || {}).settings || {};
     const current = settings[path];
@@ -568,9 +838,50 @@ document.addEventListener('change', async (event) => {
     if (typeof current.value === 'number') {
       value = Number(value);
       if (!isFinite(value)) return note(msg, 'That value is not a number.', 'bad');
+      if (current.lo !== undefined && value < current.lo) {
+        return note(msg, path + ' must be at least ' + current.lo + '.', 'bad');
+      }
+      if (current.hi !== undefined && value > current.hi) {
+        return note(msg, path + ' must be at most ' + current.hi + '.', 'bad');
+      }
     }
-    await send({ type: 'setting', path, value, expected: current.value }, path);
+    stageEdit(path, value, current.value);
+    // Repaint only the row's staged marker and the Save button, so a field being
+    // typed into is never torn out from under the caret.
+    const row = target.closest('.cfg-row');
+    if (row) row.classList.toggle('staged',
+      Object.prototype.hasOwnProperty.call(configEdits, path));
+    refreshSaveButton();
   }
+});
+
+/* The Save button lives outside the row being edited, so it is updated on its
+   own rather than by re-rendering the page mid-keystroke. */
+function refreshSaveButton() {
+  const dirty = Object.keys(configEdits).length;
+  const button = document.getElementById('cfg-save');
+  if (!button) return;
+  button.disabled = !dirty;
+  button.innerHTML = ICONS.check + ' Save' + (dirty ? ' (' + dirty + ')' : '');
+  const badge = document.querySelector('.cfg-actions .badge');
+  if (badge) badge.textContent = dirty + ' unsaved';
+  else if (dirty) {
+    const holder = document.querySelector('.cfg-actions');
+    if (holder) holder.insertAdjacentHTML('afterbegin',
+      '<span class="badge warning">' + dirty + ' unsaved</span>');
+  }
+}
+
+/* Search filters in place for the same reason. */
+document.addEventListener('input', (event) => {
+  if (event.target.id !== 'cfg-search') return;
+  configSearch = event.target.value;
+  const grid = document.querySelector('.cfg-grid');
+  const fresh = document.createElement('div');
+  fresh.innerHTML = viewConfig();
+  const replacement = fresh.querySelector('.cfg-grid') || fresh.querySelector('.panel');
+  const current = grid || document.querySelector('#view > .panel:last-of-type');
+  if (replacement && current) current.replaceWith(replacement);
 });
 
 load(true);

@@ -280,6 +280,37 @@ function rotateDialog(id, name) {
     });
 }
 
+/* Being added to someone else's workspace does not move you into it, so there has
+   to be a way across. This is that way. */
+function workspaceDialog() {
+  const spaces = state.workspaces || [];
+  Modal.show(
+    '<p class="muted">You are in ' + spaces.length + ' workspace' +
+    (spaces.length === 1 ? '' : 's') + '. Switching changes which servers and staff you see.</p>' +
+    '<div class="ws-list" style="margin-top:16px">' + spaces.map((space) => {
+      const current = space.id === state.user.workspace;
+      return '<button class="ws-row' + (current ? ' current' : '') + '" data-switch="' +
+        space.id + '"' + (current ? ' disabled' : '') + '>' +
+        '<span class="workspace-icon">' + escapeHtml((space.name || '?')[0].toUpperCase()) +
+        '</span><span><b>' + escapeHtml(space.name) + '</b><small>' +
+        (current ? 'current · ' + escapeHtml(state.user.role) : 'switch to this') +
+        '</small></span></button>';
+    }).join('') + '</div>' +
+    (spaces.length === 1
+      ? '<div class="notice" style="margin-top:16px">When someone adds you to their workspace it ' +
+        'appears here.</div>' : ''),
+    (node) => node.addEventListener('click', async (event) => {
+      const row = event.target.closest('[data-switch]');
+      if (!row || row.disabled) return;
+      const result = await api('/workspace/switch', { id: row.dataset.switch });
+      Modal.close();
+      if (result.ok) { view = 'servers'; load(); }
+      else note(msg, result.error, 'bad');
+    }),
+    'NEXUSAC / WORKSPACE', 'Switch workspace'
+  );
+}
+
 function addServerDialog() {
   Modal.show(
     '<h2>Add a server</h2><p class="muted">One key per FiveM server.</p>' +
@@ -345,30 +376,54 @@ function render() {
   if (join) join.addEventListener('click', joinDialog);
 }
 
+/* Add by username or email. If they already have a NexusAC account they are added
+   on the spot; if they do not, the same action hands back an invite code rather
+   than a dead end. */
 function inviteDialog() {
   Modal.show(
-    '<h2>Invite a staff member</h2>' +
-    '<p class="muted">They create their own account, then redeem this code.</p>' +
-    '<div class="form-stack"><label>Role<select id="role">' +
+    '<p class="muted">Type their NexusAC username or email address. If they already have an ' +
+    'account they are added straight away.</p>' +
+    '<div class="form-stack" style="margin-top:16px">' +
+    '<label>Username or email<input id="identifier" maxlength="254" placeholder="Kai, or kai@example.com"></label>' +
+    '<label>Role<select id="role">' +
     '<option value="administrator">Administrator — everything except staff</option>' +
     '<option value="moderator">Moderator — kick, freeze, screenshot</option>' +
     '<option value="viewer">Viewer — read only</option></select></label></div>' +
     '<div id="out"></div>' +
     '<div class="button-row" style="justify-content:flex-end;margin-top:16px">' +
     '<button class="button small" id="cancel">Cancel</button>' +
-    '<button class="button light small" id="make">Create code</button></div>',
+    '<button class="button light small" id="add">Add to workspace</button></div>',
     (node) => {
+      const out = node.querySelector('#out');
       node.querySelector('#cancel').addEventListener('click', () => Modal.close());
-      node.querySelector('#make').addEventListener('click', async (event) => {
+      node.querySelector('#add').addEventListener('click', async (event) => {
+        const identifier = node.querySelector('#identifier').value.trim();
+        if (!identifier) {
+          out.innerHTML = '<p class="form-message bad">Enter a username or email address.</p>';
+          return;
+        }
         event.target.disabled = true;
-        const result = await api('/staff/invite', { role: node.querySelector('#role').value });
+        const result = await api('/staff/add',
+          { identifier, role: node.querySelector('#role').value });
         event.target.disabled = false;
-        node.querySelector('#out').innerHTML = result.ok
-          ? '<div class="code-block"><pre>' + escapeHtml(result.data.token) + '</pre></div>' +
-            '<p class="muted">Valid for 24 hours, single use.</p>'
-          : '<p class="form-message bad">' + escapeHtml(result.error) + '</p>';
+
+        if (!result.ok) {
+          out.innerHTML = '<p class="form-message bad">' + escapeHtml(result.error) + '</p>';
+          return;
+        }
+        if (result.data.added) {
+          Modal.close();
+          note(msg, result.data.name + ' was added as ' + result.data.role + '.', 'good');
+          return load();
+        }
+        // No account yet: fall back to a code they can redeem after signing up.
+        out.innerHTML = '<div class="notice" style="margin-top:14px">' +
+          escapeHtml(result.data.message) + '</div>' +
+          '<div class="key-reveal" style="font-size:13px;margin-top:10px">' +
+          escapeHtml(result.data.token) + '</div>';
       });
-    }
+    },
+    'NEXUSAC / STAFF', 'Add a staff member'
   );
 }
 
@@ -404,8 +459,12 @@ async function load() {
   const initial = (state.user.name || '?')[0].toUpperCase();
   document.getElementById('ws-initial').textContent = initial;
   document.getElementById('avatar').textContent = initial;
+  const spaces = (state.workspaces || []).length;
+  const current = (state.workspaces || []).find((w) => w.id === state.user.workspace);
   document.getElementById('ws-name').innerHTML =
-    escapeHtml(state.user.name) + '<small>' + escapeHtml(state.user.role) + ' workspace</small>';
+    escapeHtml((current && current.name) || state.user.name) +
+    '<small>' + escapeHtml(state.user.role) +
+    (spaces > 1 ? ' · ' + spaces + ' workspaces' : '') + '</small>';
   document.getElementById('whoami').textContent = state.user.email;
   render();
 }
@@ -419,6 +478,8 @@ document.addEventListener('click', async (event) => {
   }
   const menu = event.target.closest('#menu');
   if (menu) return document.getElementById('sidebar').classList.toggle('mobile-open');
+
+  if (event.target.closest('#workspace-picker')) return workspaceDialog();
 
   const connect = event.target.closest('[data-connect]');
   if (connect) return connectionDialog(connect.dataset.connect);

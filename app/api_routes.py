@@ -202,6 +202,46 @@ async def staff(request: Request, action: str):
         audit(user, "staff.invite", role)
         return reply({"token": token, "expires": now() + 86400})
 
+    if action == "add":
+        # Add someone who already has a NexusAC account, by username or email.
+        # Falls back to an invite code when there is no such account yet, so the
+        # answer is never a dead end.
+        identifier = str(form.get("identifier", "")).strip()
+        role = str(form.get("role", ""))
+        require(identifier, 400, "Enter a username or email address.")
+        require(role in ("administrator", "moderator", "viewer"), 400, "Unknown role.")
+        rate("staffadd:" + str(user["workspace"]), 30)
+
+        matches = db.query(
+            "SELECT id, name, email FROM nx_users WHERE lower(email)=lower(%s) OR lower(name)=lower(%s)",
+            (identifier, identifier),
+        )
+        if not matches:
+            token = new_secret()
+            db.execute("INSERT INTO nx_invites VALUES(%s,%s,%s,%s,%s)",
+                       (sha256(token), user["workspace"], role, now() + 86400, user["user_id"]))
+            audit(user, "staff.invite", role + " (no account for " + identifier[:60] + ")")
+            return reply({
+                "invited": True, "token": token, "expires": now() + 86400,
+                "message": "Nobody with that username or email has an account yet. "
+                           "Send them this code — it works once, for 24 hours.",
+            })
+        # A display name is not unique; refuse rather than guess who was meant.
+        require(len(matches) == 1, 409,
+                "More than one account uses that username. Use their email address instead.")
+
+        target = matches[0]
+        require(str(target["id"]) != str(user["user_id"]), 409, "That is your own account.")
+        existing = db.one("SELECT role FROM nx_members WHERE workspace=%s AND user_id=%s",
+                          (user["workspace"], target["id"]))
+        if existing:
+            raise HttpError(409, "%s is already in this workspace as %s."
+                                 % (target["name"], existing["role"]))
+        db.execute("INSERT INTO nx_members VALUES(%s,%s,%s)",
+                   (user["workspace"], target["id"], role))
+        audit(user, "staff.add", target["name"] + " (" + target["email"] + ") as " + role)
+        return reply({"added": True, "name": target["name"], "email": target["email"], "role": role})
+
     if action == "remove":
         target = str(form.get("userId", ""))
         db.execute("DELETE FROM nx_members WHERE workspace=%s AND user_id=%s AND role<>'owner'",
