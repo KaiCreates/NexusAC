@@ -60,6 +60,12 @@ async def handle(request: Request, action: str):
             "serverName": server["name"],
             "serverTime": now(),
         })
+    if action == "heartbeat":
+        # Lightweight recovery path used when a full snapshot cannot be
+        # accepted. It keeps liveness accurate without pretending that stale
+        # detector data was ingested.
+        db.execute("UPDATE nx_servers SET last_seen=%s WHERE id=%s", (now(), server_id))
+        return reply({"protocol": 1, "ok": True, "serverTime": now(), "degraded": True})
     if action == "media":
         return await _media(request, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
