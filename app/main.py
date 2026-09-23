@@ -60,6 +60,12 @@ async def unhandled(request: Request, error: Exception):
     log.error("[NexusAC] %s\n%s", error, traceback.format_exc())
     message = "Service unavailable. Check the server log and the database configuration."
     if _wants_json(request):
+        # The bridge needs a stable diagnostic without exposing SQL, URLs, or
+        # stack traces. The class name lets `nexusweb` distinguish a schema,
+        # database, and application failure while the real detail stays in the
+        # server log.
+        if request.url.path.startswith("/api/control/bridge/"):
+            return reply({"error": message, "code": type(error).__name__}, 503)
         return reply({"error": message}, 503)
     return templates.TemplateResponse(
         request, "error.html", {"status": 503, "message": message}, status_code=503
