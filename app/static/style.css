@@ -35,6 +35,8 @@ body {
   font-family: Arial, Helvetica, sans-serif;
   font-size: 16px;
   line-height: 1.5;
+  /* Keep the web console strictly black, white, and neutral gray. */
+  filter: grayscale(1);
 }
 a {
   color: inherit;
