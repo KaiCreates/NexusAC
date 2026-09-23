@@ -38,6 +38,51 @@ body {
   /* Keep the web console strictly black, white, and neutral gray. */
   filter: grayscale(1);
 }
+
+/* -------------------------------------------------------------------------
+   Monochrome workspace dashboard
+   ------------------------------------------------------------------------- */
+.dashboard.full { background: #121314; color: #f4f4f4; }
+.dashboard.full .dashboard-sidebar { width: 216px; flex: 0 0 216px; background: #181a1b; border-right: 1px solid #2c2e30; }
+.dashboard.full .sidebar-brand { height: 58px; padding: 17px 20px; border-bottom: 1px solid #2c2e30; }
+.dashboard.full .sidebar-link { color: #a4a6a8; border-radius: 0; }
+.dashboard.full .sidebar-link:hover, .dashboard.full .sidebar-link.active { color: #fff; background: #303233; }
+.dashboard.full .sidebar-link.active { box-shadow: inset 2px 0 #fff; }
+.dashboard.full .nav-group { color: #707375; }
+.dashboard.full .dashboard-main { background: #121314; }
+.dashboard.full .dashboard-topbar { background: #181a1b; border-bottom: 1px solid #2c2e30; }
+.dashboard.full .breadcrumb, .dashboard.full .dashboard-title h1, .dashboard.full h2,
+.dashboard.full h3, .dashboard.full strong { color: #f4f4f4; }
+.dashboard.full .dashboard-content { max-width: 1500px; padding: 28px 26px 46px; }
+.dashboard.full .dashboard-title { margin-bottom: 24px; }
+.dashboard.full .dashboard-title h1 { font-size: 30px; letter-spacing: -.04em; }
+.dashboard.full .panel, .dashboard.full .dash-section { background: #1b1d1e; border: 1px solid #2c2e30; border-radius: 16px; box-shadow: none; }
+.dashboard.full .dash-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.dashboard.full .dash-metric { display: flex; align-items: center; gap: 15px; min-height: 116px; padding: 20px 22px; background: #1b1d1e; border: 1px solid #2c2e30; border-radius: 16px; }
+.dashboard.full .dash-metric-icon { display: grid; place-items: center; width: 52px; height: 52px; background: #f4f4f4; color: #151617; border-radius: 9px; }
+.dashboard.full .dash-metric div { display: grid; gap: 3px; }
+.dashboard.full .dash-metric small, .dashboard.full .dash-metric em { color: #96999b; font-size: 11px; font-style: normal; }
+.dashboard.full .dash-metric strong { font-size: 25px; line-height: 1; letter-spacing: -.03em; }
+.dashboard.full .dash-section { padding: 22px 24px; margin-bottom: 16px; }
+.dashboard.full .dash-section > h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #a4a6a8; margin: 0 0 18px; }
+.dashboard.full .dash-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.dashboard.full .dash-section-head h2 { margin: 0 0 3px; }
+.dashboard.full .dash-section-head p, .dashboard.full .dash-section-head .muted { margin: 0; color: #85888a; font-size: 12px; }
+.dashboard.full .dash-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.dashboard.full .dash-quick a { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 43px; color: #c7c9ca; background: #27292a; border: 1px solid #303233; border-radius: 7px; }
+.dashboard.full .dash-quick a:hover { color: #111; background: #fff; }
+.dashboard.full .server-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dashboard.full .server-card { margin: 0; padding: 18px; }
+.dashboard.full .server-card .panel-heading { border: 0; padding: 0 0 14px; }
+.dashboard.full .server-card .server-region, .dashboard.full .server-card .muted { color: #85888a; }
+.dashboard.full .badge { color: #d5d7d8; background: #27292a; border: 1px solid #3a3c3d; }
+.dashboard.full .badge.success, .dashboard.full .badge.danger, .dashboard.full .badge.warning { color: #f4f4f4; background: #303233; border-color: #55585a; }
+.dashboard.full .button { color: #d5d7d8; background: #27292a; border-color: #444748; }
+.dashboard.full .button:hover, .dashboard.full .button.light { color: #111; background: #f4f4f4; border-color: #f4f4f4; }
+.dashboard.full .button.light:hover { color: #fff; background: #333536; border-color: #55585a; }
+.dashboard.full .form-message, .dashboard.full .empty-state { color: #c9cbcc; }
+@media (max-width: 900px) { .dashboard.full .dash-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard.full .dash-quick, .dashboard.full .server-cards { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 620px) { .dashboard.full .dash-metrics, .dashboard.full .dash-quick, .dashboard.full .server-cards { grid-template-columns: 1fr; } }
 a {
   color: inherit;
   text-decoration: none;

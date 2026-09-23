@@ -51,9 +51,9 @@
     <div class="dashboard-content">
       <div class="dashboard-title">
         <div>
-          <span class="eyebrow">CONTROL CENTER</span>
-          <h1 id="view-title">Your servers.</h1>
-          <p id="view-sub" class="muted">Every FiveM server this workspace protects.</p>
+          <span class="eyebrow">NEXUSAC CONTROL CENTER</span>
+          <h1 id="view-title">Dashboard</h1>
+          <p id="view-sub" class="muted">A clear view of your protected servers and workspace activity.</p>
         </div>
         <div class="button-row" id="title-actions"></div>
       </div>
@@ -72,7 +72,7 @@ let state = null;
 let view = sessionStorage.getItem('nx_ws_view') || 'servers';
 
 const TITLES = {
-  servers: ['Your servers.', 'Every FiveM server this workspace protects.'],
+  servers: ['Dashboard', 'A clear view of your protected servers and workspace activity.'],
   commands: ['Command history.', 'What staff asked the anti-cheat to do, and what it answered.'],
   staff: ['Staff.', 'Who can see this workspace, and what they are allowed to do.'],
   audit: ['Audit log.', 'Every action taken from this website.'],
@@ -81,31 +81,32 @@ const TITLES = {
 /* ------------------------------------------------------------------ views */
 
 function viewServers() {
-  if (!state.servers.length) {
-    return '<section class="panel"><div class="empty-state">' +
-      '<h3>No servers yet</h3><p>Add a server to get an API key, then paste two lines into ' +
-      'server.cfg. <a class="text-link" href="/docs">Read the setup →</a></p></div></section>';
-  }
-  return '<div class="server-cards">' + state.servers.map((server) => {
+  const online = state.servers.filter((s) => s.online).length;
+  const metric = (iconName, label, value, note) => '<article class="dash-metric"><span class="dash-metric-icon">' +
+    icon(iconName, 22) + '</span><div><small>' + escapeHtml(label) + '</small><strong>' + escapeHtml(String(value)) +
+    '</strong><em>' + escapeHtml(note) + '</em></div></article>';
+  const quick = '<section class="dash-section"><h2>Quick links</h2><div class="dash-quick">' +
+    '<a href="/docs">' + icon('file-text', 18) + '<span>Connect a server</span></a>' +
+    '<a href="/identities">' + icon('radar', 18) + '<span>Search identities</span></a>' +
+    '<a href="/events">' + icon('log', 18) + '<span>Review events</span></a>' +
+    '<a href="/punishments">' + icon('ban', 18) + '<span>Punishment history</span></a></div></section>';
+  const cards = state.servers.length ? state.servers.map((server) => {
     const owner = state.user.role === 'owner';
     return '<article class="panel server-card">' +
-      '<div class="panel-heading"><div>' +
-        '<h3>' + escapeHtml(server.name) + '</h3>' +
-        '<span class="server-region">key ' + escapeHtml(server.hint || '') + '… · added ' +
-          escapeHtml(ago(server.created, state.serverTime)) + '</span>' +
-      '</div></div>' +
-      '<div class="button-row" style="margin-bottom:16px">' +
-        '<span class="badge ' + (server.online ? 'success' : 'danger') + '">' +
-          '<span class="status-dot"></span> ' + (server.online ? 'Reporting' : 'Offline') + '</span>' +
-        '<span class="badge">last seen ' + escapeHtml(ago(server.lastSeen, state.serverTime)) + '</span>' +
-      '</div>' +
-      '<div class="button-row">' +
-        '<a class="button light small" href="/dashboard/servers/' + server.id + '">Open console</a>' +
-        '<button class="button small" data-connect="' + server.id + '">Connection</button>' +
-        (owner ? '<button class="button small" data-remove="' + server.id + '" data-name="' +
-                   escapeHtml(server.name) + '">Remove</button>' : '') +
+      '<div class="panel-heading"><div><h3>' + escapeHtml(server.name) + '</h3>' +
+      '<span class="server-region">key ' + escapeHtml(server.hint || '') + '… · added ' + escapeHtml(ago(server.created, state.serverTime)) + '</span></div></div>' +
+      '<div class="button-row" style="margin-bottom:16px"><span class="badge ' + (server.online ? 'success' : 'danger') + '"><span class="status-dot"></span> ' +
+      (server.online ? 'Reporting' : 'Offline') + '</span><span class="badge">last seen ' + escapeHtml(ago(server.lastSeen, state.serverTime)) + '</span></div>' +
+      '<div class="button-row"><a class="button light small" href="/dashboard/servers/' + server.id + '">Open console</a>' +
+      '<button class="button small" data-connect="' + server.id + '">Connection</button>' +
+      (owner ? '<button class="button small" data-remove="' + server.id + '" data-name="' + escapeHtml(server.name) + '">Remove</button>' : '') +
       '</div></article>';
-  }).join('') + '</div>';
+  }).join('') : '<div class="empty-state"><h3>No servers yet</h3><p>Add a server to get an API key, then paste two lines into server.cfg. <a class="text-link" href="/docs">Read the setup →</a></p></div>';
+  return '<div class="dash-metrics">' + metric('server', 'SERVERS', state.servers.length, online + ' reporting now') +
+    metric('activity', 'ONLINE', online, state.servers.length ? 'of ' + state.servers.length + ' servers' : 'awaiting first server') +
+    metric('sliders', 'COMMANDS', state.commands.length, 'recent workspace actions') + metric('users', 'MEMBERS', state.members.length, 'workspace access') + '</div>' + quick +
+    '<section class="dash-section"><div class="dash-section-head"><div><h2>Servers</h2><p>Live connection status and console access.</p></div>' +
+    '<button class="button light small" id="add-server">Add server</button></div><div class="server-cards">' + cards + '</div></section>';
 }
 
 function viewCommands() {
