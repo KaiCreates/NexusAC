@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Iterable, Sequence
 
@@ -43,10 +44,14 @@ def connection():
     """
     global _conn
     with _lock:
-        for attempt in (1, 2):
-            if _conn is None or _conn.closed:
-                _conn = _connect()
+        # A sleeping pooler or a dropped idle socket should not turn one
+        # heartbeat into a 503. Reconnect failures are retried here as well as
+        # query failures, with a short bounded delay that does not hold the
+        # connection open indefinitely.
+        for attempt in (1, 2, 3):
             try:
+                if _conn is None or _conn.closed:
+                    _conn = _connect()
                 yield _conn
                 return
             except (psycopg.OperationalError, psycopg.InterfaceError):
@@ -55,8 +60,9 @@ def connection():
                 except Exception:
                     pass
                 _conn = None
-                if attempt == 2:
+                if attempt == 3:
                     raise
+                time.sleep(0.15 * attempt)
 
 
 def query(sql: str, args: Sequence[Any] = ()) -> list[dict]:
