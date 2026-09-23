@@ -287,7 +287,11 @@ function rotateDialog(id, name) {
 /* Being added to someone else's workspace does not move you into it, so there has
    to be a way across. This is that way. */
 function workspaceDialog() {
-  const spaces = state.workspaces || [];
+  if (!state || !state.user) {
+    note(msg, 'The workspace is still loading. Try again in a moment.', 'bad');
+    return;
+  }
+  const spaces = Array.isArray(state.workspaces) ? state.workspaces : [];
   Modal.show(
     '<p class="muted">You are in ' + spaces.length + ' workspace' +
     (spaces.length === 1 ? '' : 's') + '. Switching changes which servers and staff you see.</p>' +
@@ -360,6 +364,7 @@ function confirmDialog(title, warning, label, onConfirm) {
 /* ------------------------------------------------------------------ render */
 
 function render() {
+  if (!state || !state.user) return;
   const [title, sub] = TITLES[view] || TITLES.servers;
   document.getElementById('view-title').textContent = title;
   document.getElementById('view-sub').textContent = sub;
@@ -458,6 +463,9 @@ async function load() {
   if (!result.ok) {
     if (result.status === 401) return (location.href = '/login?next=/dashboard');
     return note(msg, result.error, 'bad');
+  }
+  if (!result.data || !result.data.user) {
+    return note(msg, 'The workspace response was incomplete. Retrying shortly.', 'bad');
   }
   state = result.data;
   const initial = (state.user.name || '?')[0].toUpperCase();
