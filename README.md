@@ -91,7 +91,7 @@ the page is showing, so a stale page cannot overwrite a newer value on the serve
 1. Push this repository, then at render.com choose **New → Blueprint** and pick it.
    `render.yaml` sets the build and start commands and the `/health` check.
    (Manually instead: New → Web Service, build `pip install -r requirements.txt`,
-   start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.)
+   start `python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT`.)
 2. Render prompts for the environment variables marked `sync: false`. Copy them
    from your local `.env`, and set `APP_URL` to the Render URL it gives you
    (`https://<service>.onrender.com`) — the CSRF origin check and the `Secure`
