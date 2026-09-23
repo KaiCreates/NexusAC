@@ -310,9 +310,12 @@ function viewBans() {
   const canUnban = ['owner', 'administrator'].includes(data.role) && data.online;
   const all = Array.isArray(snap.bans) ? snap.bans : [];
   const query = (banQuery || '').trim().toLowerCase();
-  const filtered = all.filter((ban) => !query ||
-    [ban.name, ban.identifier, ban.reason, ban.evidence].some((value) =>
-      String(value || '').toLowerCase().includes(query)));
+  const filtered = all.filter((ban) => {
+    const matchesQuery = !query || [ban.name, ban.identifier, ban.reason, ban.evidence].some((value) =>
+      String(value || '').toLowerCase().includes(query));
+    const matchesFilter = banFilter === 'all' || (banFilter === 'permanent' ? !ban.expires : !!ban.expires);
+    return matchesQuery && matchesFilter;
+  });
   const sorted = filtered.slice().sort((a, b) => (banSort === 'oldest'
     ? (a.at || 0) - (b.at || 0) : (b.at || 0) - (a.at || 0)));
   const pageSize = 12;
@@ -349,7 +352,8 @@ function viewBans() {
     '<input id="ban-search" placeholder="Search (Ban ID, Player Name, Reason)…" value="' + escapeHtml(banQuery) + '"></label>' +
     '<select id="ban-sort" aria-label="Sort bans"><option value="newest"' + (banSort === 'newest' ? ' selected' : '') + '>Newest first</option>' +
     '<option value="oldest"' + (banSort === 'oldest' ? ' selected' : '') + '>Oldest first</option></select>' +
-    '<button class="button small" data-ban-filter>' + icon('filter', 15) + ' Filters</button>' +
+    '<button class="button small" data-ban-filter>' + icon('filter', 15) + ' ' +
+    (banFilter === 'all' ? 'Filters' : banFilter === 'permanent' ? 'Permanent' : 'Expiring') + '</button>' +
     '<div class="ban-selectbar"><label><input type="checkbox" data-ban-select-all' + (allSelected ? ' checked' : '') + '> Select page</label>' +
     '<span>' + (filtered.length ? ((banPage - 1) * pageSize + 1) + '–' + Math.min(banPage * pageSize, filtered.length) : '0') + ' of ' + filtered.length + ' bans</span>' +
     '<button class="link-button" data-ban-select-every>Select all ' + filtered.length + '</button></div></div>' +
@@ -517,6 +521,7 @@ let configTab = 'All';
 let configSearch = '';
 let banQuery = '';
 let banSort = 'newest';
+let banFilter = 'all';
 let banPage = 1;
 let banSelected = [];
 
@@ -830,6 +835,11 @@ document.addEventListener('click', async (event) => {
 
   if (event.target.closest('[data-manual-ban]')) {
     return note(msg, 'Manual bans require a connected player session. Use the player action in Players, then review the evidence here.', '');
+  }
+  if (event.target.closest('[data-ban-filter]')) {
+    banFilter = banFilter === 'all' ? 'permanent' : banFilter === 'permanent' ? 'expiring' : 'all';
+    banPage = 1;
+    return render();
   }
   const banCheck = event.target.closest('[data-ban-check]');
   if (banCheck) {
