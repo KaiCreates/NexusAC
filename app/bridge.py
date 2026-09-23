@@ -80,6 +80,172 @@ async def _media(request: Request, server_id: str):
     return reply({"ok": True})
 
 
+def _store_identities(cur, server: dict, server_id: str, block: dict) -> int:
+    """Merge one batch of mirrored identities in, and return the cursor now held.
+
+    Idempotent on purpose. The resource resends a batch whenever a sync fails or
+    an acknowledgement is lost, so every write here has to be safe to repeat.
+    That is why counters are merged with GREATEST rather than added: adding would
+    inflate on every retry, and `sessions` is only ever "the most any one server
+    has seen for this identity", which is honest and stable.
+    """
+    held = int(server.get("identity_cursor") or 0)
+    rows = block.get("rows") or []
+    if not rows:
+        return held
+
+    workspace = server["workspace"]
+
+    cur.executemany(
+        """INSERT INTO nx_identities
+               (workspace, uid, first_seen, last_seen, sessions, last_name,
+                banned, ban_reason, banned_at, last_server)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (workspace, uid) DO UPDATE SET
+               first_seen  = LEAST(nx_identities.first_seen, EXCLUDED.first_seen),
+               last_seen   = GREATEST(nx_identities.last_seen, EXCLUDED.last_seen),
+               sessions    = GREATEST(nx_identities.sessions, EXCLUDED.sessions),
+               -- Only the more recent sighting gets to rename or re-flag.
+               last_name   = CASE WHEN EXCLUDED.last_seen >= nx_identities.last_seen
+                                  THEN EXCLUDED.last_name ELSE nx_identities.last_name END,
+               banned      = CASE WHEN EXCLUDED.last_seen >= nx_identities.last_seen
+                                  THEN EXCLUDED.banned ELSE nx_identities.banned END,
+               ban_reason  = CASE WHEN EXCLUDED.last_seen >= nx_identities.last_seen
+                                  THEN EXCLUDED.ban_reason ELSE nx_identities.ban_reason END,
+               banned_at   = COALESCE(EXCLUDED.banned_at, nx_identities.banned_at),
+               last_server = EXCLUDED.last_server""",
+        [
+            (
+                workspace, row["uid"], row["first"], row["last"], row["sessions"],
+                row["name"][:100], row["banned"], row["reason"], row["bannedAt"], server_id,
+            )
+            for row in rows
+        ],
+    )
+
+    marks = [
+        (workspace, row["uid"], mark["kind"], mark["value"],
+         mark["first"] or row["first"], mark["last"] or row["last"], mark["seen"])
+        for row in rows
+        for mark in (row.get("marks") or [])
+    ]
+    if marks:
+        cur.executemany(
+            """INSERT INTO nx_identity_marks
+                   (workspace, uid, kind, value, first_seen, last_seen, times_seen)
+               VALUES (%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (workspace, uid, kind, value) DO UPDATE SET
+                   first_seen = LEAST(nx_identity_marks.first_seen, EXCLUDED.first_seen),
+                   last_seen  = GREATEST(nx_identity_marks.last_seen, EXCLUDED.last_seen),
+                   times_seen = GREATEST(nx_identity_marks.times_seen, EXCLUDED.times_seen)""",
+            marks,
+        )
+
+    # The cursor only moves forward, so a batch that arrives out of order after a
+    # retry cannot rewind the mirror and cause the same rows to be sent forever.
+    cursor = max(held, int(block.get("cursor") or 0))
+    if cursor != held:
+        cur.execute(
+            "UPDATE nx_servers SET identity_cursor=%s WHERE id=%s", (cursor, server_id)
+        )
+    return cursor
+
+
+EVENT_RETENTION_DAYS = 30
+# One sweep every N syncs. At a ~3 second poll that is roughly hourly, which is
+# often enough for a 30-day window and rare enough not to sit in the hot path.
+EVENT_SWEEP_EVERY = 1200
+
+
+def _store_events(cur, server: dict, server_id: str, block: dict, sequence: int) -> int:
+    """Append one batch of raw events, and return the cursor now held.
+
+    Deduplicated on (server, boot, seq), so a resent batch inserts nothing. The
+    cursor resets when the boot changes, because the resource's sequence starts
+    again at zero on every resource start -- comparing across boots would make a
+    fresh session look like a replay and drop all of it.
+    """
+    boot = block.get("boot")
+    rows = block.get("rows") or []
+    held = int(server.get("event_cursor") or 0)
+    same_boot = boot is not None and server.get("event_boot") == boot
+
+    if not rows:
+        return held if same_boot else 0
+
+    workspace = server["workspace"]
+    cur.executemany(
+        """INSERT INTO nx_events
+               (workspace, server, boot, seq, at, type,
+                sender, sender_name, target, target_name, data)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (server, boot, seq) DO NOTHING""",
+        [
+            (
+                workspace, server_id, boot, row["seq"], row["at"], row["type"],
+                row["sender"], row["senderName"], row["target"], row["targetName"],
+                db.jsonb(row.get("data") or {}),
+            )
+            for row in rows
+        ],
+    )
+
+    cursor = int(block.get("cursor") or 0)
+    if same_boot:
+        cursor = max(held, cursor)
+    cur.execute(
+        "UPDATE nx_servers SET event_boot=%s, event_cursor=%s WHERE id=%s",
+        (boot, cursor, server_id),
+    )
+
+    # Retention. Without this the table is unbounded, and an event log is the
+    # one table on this site that genuinely would grow without limit.
+    if sequence % EVENT_SWEEP_EVERY == 0:
+        cur.execute(
+            "DELETE FROM nx_events WHERE server=%s AND at < %s",
+            (server_id, now() - EVENT_RETENTION_DAYS * 86400),
+        )
+
+    return cursor
+
+
+def _store_punishments(cur, server: dict, server_id: str, block: dict) -> int:
+    """Append punishments. Same boot/seq dedup as events, and no retention sweep
+    -- this is the table somebody appeals against a year later."""
+    boot = block.get("boot")
+    rows = block.get("rows") or []
+    held = int(server.get("punish_cursor") or 0)
+    same_boot = boot is not None and server.get("punish_boot") == boot
+
+    if not rows:
+        return held if same_boot else 0
+
+    cur.executemany(
+        """INSERT INTO nx_punishments
+               (workspace, server, boot, seq, at, kind, identifier, name,
+                reason, by_actor, auto, days, detector, evidence)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           ON CONFLICT (server, boot, seq) DO NOTHING""",
+        [
+            (
+                server["workspace"], server_id, boot, row["seq"], row["at"], row["kind"],
+                row["identifier"], row["name"], row["reason"], row["by"],
+                row["auto"], row["days"], row["detector"], row["evidence"],
+            )
+            for row in rows
+        ],
+    )
+
+    cursor = int(block.get("cursor") or 0)
+    if same_boot:
+        cursor = max(held, cursor)
+    cur.execute(
+        "UPDATE nx_servers SET punish_boot=%s, punish_cursor=%s WHERE id=%s",
+        (boot, cursor, server_id),
+    )
+    return cursor
+
+
 async def _sync(request: Request, server: dict, server_id: str):
     body = await json_body(request, MAX_SNAPSHOT_BYTES)
     payload = SyncRequest(**body)
@@ -91,6 +257,12 @@ async def _sync(request: Request, server: dict, server_id: str):
 
     snapshot = payload.snapshot.model_dump(mode="json")
     evidence = snapshot.pop("evidence", [])
+    # Identities are mirrored into their own tables, not kept in the snapshot
+    # blob -- the blob is replaced wholesale on every poll and this data has to
+    # accumulate.
+    identities = snapshot.pop("identities", None) or {}
+    event_log = snapshot.pop("eventLog", None) or {}
+    punishments = snapshot.pop("punishments", None) or {}
 
     with db.transaction() as cur:
         # Re-read inside the write transaction: a key rotation and a poll that
@@ -130,6 +302,10 @@ async def _sync(request: Request, server: dict, server_id: str):
                 (server_id, item["id"], db.jsonb(item), now()),
             )
 
+        identity_cursor = _store_identities(cur, server, server_id, identities)
+        event_cursor = _store_events(cur, server, server_id, event_log, payload.sequence)
+        punish_cursor = _store_punishments(cur, server, server_id, punishments)
+
         for ack in payload.acknowledgements:
             status = "uncertain" if ack.uncertain else ("succeeded" if ack.ok else "failed")
             cur.execute(
@@ -163,6 +339,11 @@ async def _sync(request: Request, server: dict, server_id: str):
             "protocol": 1,
             "serverTime": now(),
             "accepted": payload.sequence,
+            # Where the identity mirror has got to. The resource resumes from
+            # this, so a batch that never landed is simply sent again.
+            "identityCursor": identity_cursor,
+            "eventCursor": event_cursor,
+            "punishCursor": punish_cursor,
             "commands": [
                 {
                     "id": str(item["id"]),

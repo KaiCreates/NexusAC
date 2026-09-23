@@ -127,6 +127,27 @@ async def server_page(request: Request, server_id: str):
     return _page(request, "server.html", server_id=server_id)
 
 
+@app.get("/identities", response_class=HTMLResponse)
+async def identities_page(request: Request):
+    if not session_for(request):
+        return RedirectResponse("/login?next=/identities", status_code=303)
+    return _page(request, "identities.html", query=request.query_params.get("q", ""))
+
+
+@app.get("/events", response_class=HTMLResponse)
+async def events_page(request: Request):
+    if not session_for(request):
+        return RedirectResponse("/login?next=/events", status_code=303)
+    return _page(request, "events.html", query=request.query_params.get("q", ""))
+
+
+@app.get("/punishments", response_class=HTMLResponse)
+async def punishments_page(request: Request):
+    if not session_for(request):
+        return RedirectResponse("/login?next=/punishments", status_code=303)
+    return _page(request, "punishments.html", query=request.query_params.get("q", ""))
+
+
 @app.get("/docs", response_class=HTMLResponse)
 async def docs(request: Request):
     return _page(request, "docs.html", app_url=config.APP_URL)

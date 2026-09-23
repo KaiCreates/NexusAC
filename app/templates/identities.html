@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Identities — NexusAC{% endblock %}
+{% block chrome %}{% endblock %}
+{% block foot %}{% endblock %}
+{% block body %}
+<div class="dashboard full" id="main">
+  <aside class="dashboard-sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      {{ ui.brand() }}
+    </div>
+    <button class="workspace-picker" id="workspace-picker">
+      <span class="workspace-icon" id="ws-initial">·</span>
+      <span id="ws-name">Loading…<small id="ws-role">workspace</small></span>
+      {{ ui.icon('chevron-down', 13) }}
+    </button>
+    <nav aria-label="Dashboard navigation">
+      <span class="nav-group">WORKSPACE</span>
+      <a class="sidebar-link" href="/dashboard">{{ ui.icon('server') }} Servers</a>
+      <a class="sidebar-link" href="/events">{{ ui.icon('log') }} Events</a>
+      <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
+      <a class="sidebar-link active" href="/identities">{{ ui.icon('radar') }} Identities</a>
+      <span class="nav-group">HELP</span>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
+      <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
+    </nav>
+    <div class="sidebar-bottom">
+      {{ ui.icon('shield-check', 17) }}
+      <div>Built for your community<small>NexusAC · web console</small></div>
+    </div>
+  </aside>
+
+  <div class="dashboard-main">
+    <header class="dashboard-topbar">
+      <div>
+        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
+          {{ ui.icon('menu', 19) }}
+        </button>
+        <span class="breadcrumb">Workspace {{ ui.icon('chevron-right', 13) }} <b>Identities</b></span>
+      </div>
+      <div class="topbar-right">
+        <span class="simulation-label" id="whoami">—</span>
+        <span class="avatar tiny" id="avatar">·</span>
+      </div>
+    </header>
+
+    <div class="dashboard-content">
+      <div class="dashboard-title">
+        <div>
+          <span class="eyebrow">INVESTIGATION</span>
+          <h1>Identities.</h1>
+          <p class="muted">
+            Every player seen by the servers in this workspace, and the accounts
+            they share identifiers with.
+          </p>
+        </div>
+      </div>
+
+      <div class="id-search">
+        {{ ui.icon('search', 17) }}
+        <input id="id-q" type="search" autocomplete="off" spellcheck="false"
+               value="{{ query }}"
+               placeholder="License, Discord ID, Steam ID, IP address, or a player name">
+        <kbd>/</kbd>
+      </div>
+      <p class="id-hint muted" id="id-hint">
+        Paste any identifier. A 40-character hex string is read as a license, 17–20
+        digits as a Discord ID, four dotted octets as an IP; anything else is
+        searched as a name.
+      </p>
+
+      <div class="id-toolbar" id="id-toolbar" hidden>
+        <a class="id-tool" href="/identities" title="Clear the search">{{ ui.icon('grid', 15) }}</a>
+        <span class="id-tool static" id="id-count">—</span>
+        <button class="id-tool" id="id-tree-toggle">{{ ui.icon('braces', 15) }} <span>Hide account tree</span></button>
+        <span class="id-spacer"></span>
+        <div class="id-pager">
+          <button class="id-page-btn" id="id-prev" aria-label="Previous page">{{ ui.icon('arrow-left', 15) }}</button>
+          <span class="id-page-of"><b id="id-page">1</b> of <span id="id-pages">1</span></span>
+          <button class="id-page-btn" id="id-next" aria-label="Next page">{{ ui.icon('arrow-right', 15) }}</button>
+          <select id="id-size" aria-label="Results per page">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+
+      <section class="id-tree-panel" id="id-tree-panel" hidden>
+        <div class="id-tree-head">
+          <span class="eyebrow">ACCOUNT TREE</span>
+          <span class="muted" id="id-tree-note"></span>
+        </div>
+        <svg id="id-tree" viewBox="0 0 1000 560" role="img"
+             aria-label="Graph of accounts linked by shared identifiers"></svg>
+        <div class="id-tree-legend" id="id-tree-legend"></div>
+      </section>
+
+      <p class="form-message" id="msg" hidden></p>
+      <div class="id-grid" id="id-grid"></div>
+      <div class="id-empty" id="id-empty" hidden></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/static/identities.js"></script>
+{% endblock %}

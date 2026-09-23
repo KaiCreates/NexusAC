@@ -10,7 +10,10 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from . import db, supabase_auth
+from . import (
+    db, events as event_store, identities as identity_store,
+    punishments as punishment_store, supabase_auth,
+)
 from .bridge import handle as bridge_handle, json_body
 from .protocol import parse_command
 from .security import (
@@ -301,6 +304,117 @@ async def create_server(request: Request):
     return reply({"id": server_id, "token": token}, 201)
 
 
+# --------------------------------------------------------------------------- #
+# Identities
+#
+# Read-only and workspace scoped. Identifiers are addressed as query parameters
+# rather than path segments because a uid looks like `license:9f3a...` and a raw
+# colon in a path is a needless escaping problem for every caller.
+# --------------------------------------------------------------------------- #
+
+def _int_param(request: Request, name: str, default: int) -> int:
+    raw = request.query_params.get(name)
+    try:
+        return int(raw) if raw is not None else default
+    except ValueError:
+        return default
+
+
+@router.get("/identities")
+async def identity_search(request: Request):
+    user = authenticated(request)
+    rate(f"identities:{user['id']}", 120, 60)
+    return reply(
+        identity_store.search(
+            user["workspace"],
+            request.query_params.get("q", ""),
+            _int_param(request, "page", 1),
+            _int_param(request, "size", 25),
+        )
+    )
+
+
+@router.get("/identities/detail")
+async def identity_detail(request: Request):
+    user = authenticated(request)
+    uid = request.query_params.get("uid", "")
+    require(uid, 400, "An identity id is required.")
+    return reply(identity_store.detail(user["workspace"], uid))
+
+
+@router.get("/identities/aliases")
+async def identity_aliases(request: Request):
+    user = authenticated(request)
+    uid = request.query_params.get("uid", "")
+    require(uid, 400, "An identity id is required.")
+    # The traversal is several indexed queries deep, so it gets a tighter budget
+    # than the plain search above.
+    rate(f"aliases:{user['id']}", 30, 60)
+    return reply(
+        identity_store.aliases(
+            user["workspace"], uid, _int_param(request, "depth", identity_store.MAX_DEPTH)
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Event log
+# --------------------------------------------------------------------------- #
+
+@router.get("/events")
+async def events_search(request: Request):
+    user = authenticated(request)
+    rate(f"events:{user['id']}", 180, 60)
+    q = request.query_params
+    return reply(
+        event_store.search(
+            user["workspace"],
+            q.get("q", ""),
+            q.get("type"),
+            q.get("window", "all"),
+            _int_param(request, "page", 1),
+            _int_param(request, "size", 25),
+            q.get("server") or None,
+        )
+    )
+
+
+@router.get("/events/types")
+async def events_types(request: Request):
+    user = authenticated(request)
+    return reply({"types": event_store.types(user["workspace"])})
+
+
+# --------------------------------------------------------------------------- #
+# Punishments
+# --------------------------------------------------------------------------- #
+
+@router.get("/punishments")
+async def punishments_search(request: Request):
+    user = authenticated(request)
+    rate(f"punishments:{user['id']}", 180, 60)
+    q = request.query_params
+    result = punishment_store.search(
+        user["workspace"],
+        q.get("q", ""),
+        q.get("kind"),
+        q.get("window", "all"),
+        q.get("actor"),
+        _int_param(request, "page", 1),
+        _int_param(request, "size", 25),
+    )
+    result["summary"] = punishment_store.summary(user["workspace"])
+    return reply(result)
+
+
+@router.get("/punishments/identity")
+async def punishments_for_identity(request: Request):
+    user = authenticated(request)
+    identifier = request.query_params.get("uid", "")
+    require(identifier, 400, "An identity id is required.")
+    return reply({"rows": punishment_store.for_identity(user["workspace"], identifier)})
+
+
 def _server_of(user: dict, server_id: str) -> dict:
     try:
         server = db.one("SELECT * FROM nx_servers WHERE id=%s AND workspace=%s",
@@ -354,6 +468,15 @@ async def snapshot(request: Request, server_id: str):
         "FROM nx_evidence e WHERE e.server=%s ORDER BY e.updated DESC LIMIT 200",
         (server_id,),
     )
+    # Recent commands travel with the snapshot. Without them this page could
+    # only ever say "queued" -- a refused or failed command was invisible here,
+    # because commands were only exposed on the workspace endpoint.
+    commands = db.query(
+        "SELECT id, actor_name, body, created, expires, status, result, ack_at "
+        "FROM nx_commands WHERE server=%s ORDER BY created DESC LIMIT 25",
+        (server_id,),
+    )
+
     return reply({
         "id": server_id,
         "name": server["name"],
@@ -364,6 +487,23 @@ async def snapshot(request: Request, server_id: str):
         "serverTime": now(),
         "snapshot": server["snapshot"],
         "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence],
+        "commands": [
+            {
+                "id": str(c["id"]),
+                "actor": c["actor_name"],
+                "type": (c["body"] or {}).get("type"),
+                "path": (c["body"] or {}).get("path") or (c["body"] or {}).get("detector")
+                        or (c["body"] or {}).get("signal"),
+                "value": (c["body"] or {}).get("value") or (c["body"] or {}).get("mode")
+                         or (c["body"] or {}).get("action"),
+                "created": int(c["created"]),
+                "result": c["result"],
+                "ackAt": c["ack_at"],
+                "status": "expired" if c["status"] in ("pending", "sent")
+                          and int(c["expires"]) <= now() else c["status"],
+            }
+            for c in commands
+        ],
     })
 
 
@@ -384,7 +524,7 @@ async def command(request: Request, server_id: str):
     # Every mutating command carries the value it expects to be acting on. If the
     # world moved since the page was drawn, the command is refused rather than
     # applied to whatever is there now.
-    if kind in ("kick", "ban", "freeze", "screenshot"):
+    if kind in ("warn", "kick", "ban", "freeze", "screenshot"):
         require(
             any(p.get("src") == payload.target and p.get("sessionKey") == payload.session
                 for p in snap.get("players", [])),
@@ -403,6 +543,11 @@ async def command(request: Request, server_id: str):
         require(detector and not detector.get("locked")
                 and detector.get("mode") == payload.expected,
                 409, "That detector is locked, unknown, or changed.")
+    elif kind == "punish":
+        row = next((k for k in (snap.get("config") or {}).get("kinds", [])
+                    if k.get("kind") == payload.signal), None)
+        require(row and row.get("action") == payload.expected, 409,
+                "That signal is unknown, or its punishment changed. Refresh before editing.")
 
     rate("command:" + str(user["user_id"]), 60, 60)
     command_id = new_id()

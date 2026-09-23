@@ -96,10 +96,15 @@ def jsonb(value: Any) -> Jsonb:
 
 
 def run_migrations(statements: Iterable[str] | None = None) -> None:
+    """Apply every migration in filename order.
+
+    All of them are written to be safe to re-run (CREATE TABLE IF NOT EXISTS,
+    ADD COLUMN IF NOT EXISTS), so there is no version table to keep in step --
+    running the whole set is the same as running the missing ones.
+    """
     from pathlib import Path
 
-    sql = (Path(__file__).resolve().parent.parent / "migrations" / "001_init.sql").read_text(
-        encoding="utf-8"
-    )
+    folder = Path(__file__).resolve().parent.parent / "migrations"
     with connection() as conn, conn.cursor() as cur:
-        cur.execute(sql)
+        for path in sorted(folder.glob("*.sql")):
+            cur.execute(path.read_text(encoding="utf-8"))

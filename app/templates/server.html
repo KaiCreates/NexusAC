@@ -239,7 +239,70 @@ function viewDetectors() {
   return offlineNote() + panel('Detectors',
     table(['Detector', 'Maturity', 'Mode', 'Enforcement', 'Counters'], rows,
       'No detectors reported', 'The server sends its detector list with every snapshot.'),
-    '<span class="badge">' + (snap.detectors || []).length + '</span>');
+    '<span class="badge">' + (snap.detectors || []).length + '</span>') +
+    viewPunishments() + commandLog();
+}
+
+/* Per-signal enforcement.
+
+   `risk` hands the finding to the correlation engine, which needs independent
+   evidence from several detector families before it kicks or bans. Any other
+   value is a verdict on a single detection.
+
+   That difference is the whole reason false positives are survivable, so the
+   table says it plainly rather than presenting five equivalent-looking options.
+   Setting a noisy signal to `ban` does not make the anti-cheat stricter, it
+   makes every false reading a ban. */
+const PUNISH_ACTIONS = ['none', 'log', 'risk', 'kick', 'ban'];
+const PUNISH_NOTE = {
+  none: 'Ignored entirely.',
+  log:  'Recorded only. No score, no action.',
+  risk: 'Scored, and correlated with other findings before anything happens.',
+  kick: 'Kicks on a single detection.',
+  ban:  'Bans on a single detection.',
+};
+
+function viewPunishments() {
+  const snap = data.snapshot || {};
+  const kinds = ((snap.config || {}).kinds) || [];
+  if (!kinds.length) return '';
+
+  const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+  const search = (configSearch || '').toLowerCase();
+
+  const rows = kinds
+    .filter((k) => !search || k.kind.toLowerCase().includes(search))
+    .map((k) => {
+      const action = k.action || 'risk';
+      const control = editable
+        ? '<select data-punish="' + escapeHtml(k.kind) + '" data-expected="' +
+          escapeHtml(action) + '">' + PUNISH_ACTIONS.map((option) =>
+            '<option value="' + option + '"' + (option === action ? ' selected' : '') + '>' +
+            option + '</option>').join('') + '</select>'
+        : '<span class="badge' + (action === 'ban' ? ' danger' : action === 'risk' ? '' : ' warning') +
+          '">' + escapeHtml(action) + '</span>';
+      return '<tr' + (action === 'ban' || action === 'kick' ? ' class="flag"' : '') + '>' +
+        '<td class="mono">' + escapeHtml(k.kind) + '</td>' +
+        '<td class="muted">' + escapeHtml(k.label || '') + '</td>' +
+        '<td class="mono">' + num(k.weight) + '</td>' +
+        '<td>' + control + '</td>' +
+        '<td class="muted">' + escapeHtml(PUNISH_NOTE[action] || '') + '</td></tr>';
+    });
+
+  const instant = kinds.filter((k) => k.action === 'ban' || k.action === 'kick').length;
+
+  return panel('Per-signal enforcement',
+    '<p class="panel-note">' +
+      'On <b>risk</b>, a finding is scored and has to be corroborated by other ' +
+      'detector families before anyone is kicked or banned — that buffer is what ' +
+      'absorbs a single bad reading. Set a signal to <b>kick</b> or <b>ban</b> and ' +
+      'one detection is the whole verdict, including a wrong one.' +
+    '</p>' +
+    table(['Signal', 'Meaning', 'Weight', 'On one detection', 'Effect'], rows,
+      'No signals reported', 'The server sends its signal list with the configuration.'),
+    instant
+      ? '<span class="badge danger">' + instant + ' instant</span>'
+      : '<span class="badge">all correlated</span>');
 }
 
 function viewBans() {
@@ -519,7 +582,46 @@ function viewConfig() {
   }).join('');
 
   return offlineNote() + header + '<div class="cfg-grid">' + cards + '</div>' +
+    commandLog() +
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
+}
+
+/* What actually happened to the last few commands.
+
+   This panel exists because its absence was a real bug: saving a setting said
+   "queued, applies over the next few polls" and then never told you anything
+   again, whether it applied, was refused, or expired unclaimed. A change that
+   silently does nothing is worse than one that fails loudly. */
+const COMMAND_STATUS = {
+  pending:   ['Queued', 'Waiting for the server to collect it on its next poll.', 'warning'],
+  sent:      ['Delivered', 'The server has it and has not reported back yet.', 'warning'],
+  succeeded: ['Applied', '', 'good'],
+  failed:    ['Refused', '', 'bad'],
+  uncertain: ['Uncertain', 'Execution was interrupted; verify before retrying.', 'bad'],
+  expired:   ['Expired', 'The server never collected it. Is it online and syncing?', 'bad'],
+  cancelled: ['Cancelled', '', ''],
+};
+
+function commandLog() {
+  const rows = (data.commands || []).filter(
+    (c) => c.type === 'setting' || c.type === 'detector' || c.type === 'punish');
+  if (!rows.length) return '';
+
+  const body = rows.slice(0, 10).map((c) => {
+    const [label, hint, tone] = COMMAND_STATUS[c.status] || [c.status, '', ''];
+    const detail = c.result || hint;
+    return '<tr>' +
+      '<td class="mono">' + escapeHtml(c.path || c.type) + '</td>' +
+      '<td class="mono">' + escapeHtml(String(c.value)) + '</td>' +
+      '<td><span class="badge' + (tone ? ' ' + tone : '') + '">' + escapeHtml(label) + '</span></td>' +
+      '<td>' + escapeHtml(detail || '—') + '</td>' +
+      '<td class="muted">' + escapeHtml(c.actor || '') + ' · ' + ago(c.created, data.serverTime) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return panel('Recent changes',
+    table(['Setting', 'Value', 'Status', 'Result', 'By'], [body],
+          'No changes yet', 'Configuration changes you make will show their outcome here.'));
 }
 
 const VIEWS = {
@@ -814,9 +916,13 @@ async function saveConfig() {
   configEdits = {};
   note(msg, refused.length
     ? queued + ' change(s) queued, ' + refused.length + ' refused: ' + refused[0]
-    : queued + ' change(s) queued. The server applies them over the next few polls.',
+    : queued + ' change(s) queued — watch Recent changes below for the outcome.',
     refused.length ? 'bad' : 'good');
+  // Two reloads: the first catches the command being collected, the second the
+  // result coming back on the sync after that. Without the second, the panel
+  // would sit on "Delivered" until something else triggered a refresh.
   setTimeout(() => load(true), 2500);
+  setTimeout(() => load(true), 7000);
   render();
 }
 
@@ -827,6 +933,22 @@ document.addEventListener('change', async (event) => {
   if (detectorId) {
     return void send({ type: 'detector', detector: detectorId, mode: target.value,
                        expected: target.dataset.expected }, detectorId);
+  }
+
+  const signal = target.dataset.punish;
+  if (signal) {
+    const action = target.value;
+    const was = target.dataset.expected;
+    // Moving a signal onto an instant verdict is asked about once. Everything
+    // else applies straight away, including moving one back to risk.
+    if ((action === 'ban' || action === 'kick') &&
+        !confirm('Set "' + signal + '" to ' + action + ' on a single detection?\n\n' +
+                 'This removes the correlation buffer for this signal: one reading, ' +
+                 'including a wrong one, becomes the whole verdict.')) {
+      target.value = was;
+      return;
+    }
+    return void send({ type: 'punish', signal, action, expected: was }, signal);
   }
 
   const path = target.dataset.cfg;

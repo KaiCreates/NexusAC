@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Events — NexusAC{% endblock %}
+{% block chrome %}{% endblock %}
+{% block foot %}{% endblock %}
+{% block body %}
+<div class="dashboard full" id="main">
+  <aside class="dashboard-sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      {{ ui.brand() }}
+    </div>
+    <button class="workspace-picker" id="workspace-picker">
+      <span class="workspace-icon" id="ws-initial">·</span>
+      <span id="ws-name">Loading…<small id="ws-role">workspace</small></span>
+      {{ ui.icon('chevron-down', 13) }}
+    </button>
+    <nav aria-label="Dashboard navigation">
+      <span class="nav-group">WORKSPACE</span>
+      <a class="sidebar-link" href="/dashboard">{{ ui.icon('server') }} Servers</a>
+      <a class="sidebar-link active" href="/events">{{ ui.icon('log') }} Events</a>
+      <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
+      <a class="sidebar-link" href="/identities">{{ ui.icon('radar') }} Identities</a>
+      <span class="nav-group">HELP</span>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
+      <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
+    </nav>
+    <div class="sidebar-bottom">
+      {{ ui.icon('shield-check', 17) }}
+      <div>Built for your community<small>NexusAC · web console</small></div>
+    </div>
+  </aside>
+
+  <div class="dashboard-main">
+    <header class="dashboard-topbar">
+      <div>
+        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
+          {{ ui.icon('menu', 19) }}
+        </button>
+        <span class="breadcrumb">Workspace {{ ui.icon('chevron-right', 13) }} <b>Events</b></span>
+      </div>
+      <div class="topbar-right">
+        <span class="simulation-label" id="whoami">—</span>
+        <span class="avatar tiny" id="avatar">·</span>
+      </div>
+    </header>
+
+    <div class="dashboard-content wide">
+
+      <!-- Search row ------------------------------------------------------ -->
+      <div class="ev-bar">
+        <label class="ev-search" for="ev-q">
+          <span class="ev-label">Search</span>
+          <input id="ev-q" type="search" autocomplete="off" spellcheck="false"
+                 value="{{ query }}"
+                 placeholder="Search names or licenses, or filter with fields: event_type:weaponDamage &amp;&amp; data.weaponType:`weapon_pistol`">
+        </label>
+
+        <div class="ev-select">
+          {{ ui.icon('sliders', 15) }}
+          <select id="ev-type" aria-label="Event type">
+            <option value="all">All Events</option>
+          </select>
+        </div>
+
+        <div class="ev-select">
+          {{ ui.icon('activity', 15) }}
+          <select id="ev-window" aria-label="Time range">
+            <option value="all">All time</option>
+            <option value="1h">Last hour</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
+
+        <button class="ev-go" id="ev-go">{{ ui.icon('search', 15) }} Search</button>
+      </div>
+
+      <!-- Count + pager --------------------------------------------------- -->
+      <div class="ev-meta">
+        <span class="ev-count" id="ev-count">
+          Showing <b id="ev-shown">0</b> of <b id="ev-total">0</b> events
+        </span>
+        <div class="ev-pager">
+          <button class="ev-page-btn" id="ev-prev" aria-label="Previous page">{{ ui.icon('arrow-left', 15) }}</button>
+          <input class="ev-page-input" id="ev-page" value="1" inputmode="numeric" aria-label="Page">
+          <span class="ev-of">of <span id="ev-pages">1</span></span>
+          <button class="ev-page-btn accent" id="ev-next" aria-label="Next page">{{ ui.icon('arrow-right', 15) }}</button>
+          <select id="ev-size" aria-label="Rows per page">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="form-message" id="msg" hidden></p>
+
+      <!-- Table ----------------------------------------------------------- -->
+      <div class="ev-table-wrap">
+        <table class="ev-table">
+          <thead>
+            <tr>
+              <th data-col="time">Time</th>
+              <th data-col="type">Event Type</th>
+              <th data-col="data">Data</th>
+              <th data-col="sender">Sender</th>
+              <th data-col="target">Target</th>
+              <th class="ev-cols">
+                <button id="ev-cols" aria-label="Columns" title="Show or hide columns">&#8942;</button>
+                <div class="ev-colmenu" id="ev-colmenu" hidden></div>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="ev-body"></tbody>
+        </table>
+      </div>
+
+      <div class="ev-empty" id="ev-empty" hidden></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/static/events.js"></script>
+{% endblock %}
