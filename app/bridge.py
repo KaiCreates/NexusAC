@@ -18,7 +18,7 @@ from . import db
 from .protocol import MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MediaRequest, SyncRequest
 from .security import HttpError, rate, reply, require, sha256, now
 
-BEARER = re.compile(r"^Bearer ([A-Za-z0-9_-]{43})$")
+BEARER = re.compile(r"^Bearer\s+([A-Za-z0-9_-]{43})$", re.IGNORECASE)
 CLOCK_SKEW_SECONDS = 90
 
 
@@ -52,6 +52,14 @@ async def handle(request: Request, action: str):
     server = server_for(request)
     server_id = str(server["id"])
 
+    if action == "ping":
+        return reply({
+            "protocol": 1,
+            "ok": True,
+            "serverId": server_id,
+            "serverName": server["name"],
+            "serverTime": now(),
+        })
     if action == "media":
         return await _media(request, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
