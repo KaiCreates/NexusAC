@@ -81,7 +81,7 @@ const TITLES = {
 /* ------------------------------------------------------------------ views */
 
 function viewServers() {
-  const online = state.servers.filter((s) => s.online).length;
+  const online = state.servers.filter((s) => s.status === 'online' || (!s.status && s.online)).length;
   const metric = (iconName, label, value, note) => '<article class="dash-metric"><span class="dash-metric-icon">' +
     icon(iconName, 22) + '</span><div><small>' + escapeHtml(label) + '</small><strong>' + escapeHtml(String(value)) +
     '</strong><em>' + escapeHtml(note) + '</em></div></article>';
@@ -95,8 +95,8 @@ function viewServers() {
     return '<article class="panel server-card">' +
       '<div class="panel-heading"><div><h3>' + escapeHtml(server.name) + '</h3>' +
       '<span class="server-region">key ' + escapeHtml(server.hint || '') + '… · added ' + escapeHtml(ago(server.created, state.serverTime)) + '</span></div></div>' +
-      '<div class="button-row" style="margin-bottom:16px"><span class="badge ' + (server.online ? 'success' : 'danger') + '"><span class="status-dot"></span> ' +
-      (server.online ? 'Reporting' : 'Offline') + '</span><span class="badge">last seen ' + escapeHtml(ago(server.lastSeen, state.serverTime)) + '</span></div>' +
+      '<div class="button-row" style="margin-bottom:16px"><span class="badge ' + (server.status === 'online' ? 'success' : server.status === 'degraded' ? 'warning' : 'danger') + '"><span class="status-dot"></span> ' +
+      (server.status === 'online' ? 'Reporting' : server.status === 'degraded' ? 'Degraded' : 'Offline') + '</span><span class="badge">last seen ' + escapeHtml(ago(server.lastSeen, state.serverTime)) + '</span></div>' +
       '<div class="button-row"><a class="button light small" href="/dashboard/servers/' + server.id + '">Open console</a>' +
       '<button class="button small" data-connect="' + server.id + '">Connection</button>' +
       (owner ? '<button class="button small" data-remove="' + server.id + '" data-name="' + escapeHtml(server.name) + '">Remove</button>' : '') +

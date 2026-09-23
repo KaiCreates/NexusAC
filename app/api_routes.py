@@ -24,11 +24,23 @@ from .security import (
 router = APIRouter()
 EMAIL = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
 MIN_PASSWORD = 12
-ONLINE_WINDOW = 30  # the resource heartbeats about once per second
+DEGRADED_WINDOW = 30
+ONLINE_WINDOW = 60
 
 
 def _online(last_seen: Any) -> bool:
     return last_seen is not None and now() - int(last_seen) < ONLINE_WINDOW
+
+
+def _health(last_seen: Any) -> str:
+    if last_seen is None:
+        return "offline"
+    age = max(0, now() - int(last_seen))
+    if age < DEGRADED_WINDOW:
+        return "online"
+    if age < ONLINE_WINDOW:
+        return "degraded"
+    return "offline"
 
 
 # --------------------------------------------------------------------------- #
@@ -153,7 +165,8 @@ async def workspace(request: Request):
         },
         "servers": [
             {"id": str(s["id"]), "name": s["name"], "lastSeen": s["last_seen"],
-             "created": s["created"], "hint": s["token_hint"], "online": _online(s["last_seen"])}
+             "created": s["created"], "hint": s["token_hint"], "online": _online(s["last_seen"]),
+             "status": _health(s["last_seen"])}
             for s in servers
         ],
         "members": [{"id": str(m["id"]), "name": m["name"], "email": m["email"],
@@ -484,6 +497,7 @@ async def snapshot(request: Request, server_id: str):
         "hint": server["token_hint"],
         "lastSeen": server["last_seen"],
         "online": _online(server["last_seen"]),
+        "status": _health(server["last_seen"]),
         "serverTime": now(),
         "snapshot": server["snapshot"],
         "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence],

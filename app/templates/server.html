@@ -678,8 +678,8 @@ function renderStats() {
   const overview = (data.snapshot || {}).overview || {};
   const thresholds = overview.thresholds || {};
   const cards = [
-    ['Status', data.online ? 'Online' : 'Offline',
-      data.online ? 'Reporting every few seconds' : 'No recent report', 'shield-check'],
+    ['Status', data.status === 'degraded' ? 'Degraded' : data.status === 'online' ? 'Online' : 'Offline',
+      data.status === 'online' ? 'Reporting normally' : data.status === 'degraded' ? 'Waiting for the next heartbeat' : 'No recent report', 'shield-check'],
     ['Mode', (overview.mode || '—'), overview.mode === 'observe'
       ? 'Recording only, not acting' : 'Acting on the risk engine', 'sliders'],
     ['Players', num(overview.online), num(overview.clientless) + ' not reporting a client', 'users'],
@@ -702,9 +702,9 @@ function render() {
   document.getElementById('crumb').textContent = tab;
   document.getElementById('avatar').textContent = (data.name || '?')[0].toUpperCase();
   document.getElementById('online-badge').className =
-    'badge ' + (data.online ? 'success' : 'danger');
+    'badge ' + (data.status === 'online' ? 'success' : data.status === 'degraded' ? 'warning' : 'danger');
   document.getElementById('online-badge').innerHTML =
-    '<span class="status-dot"></span> ' + (data.online ? 'Protected' : 'Offline');
+    '<span class="status-dot"></span> ' + (data.status === 'online' ? 'Protected' : data.status === 'degraded' ? 'Degraded' : 'Offline');
   document.getElementById('seen').textContent =
     'last seen ' + ago(data.lastSeen, data.serverTime) + ' · key ' + (data.hint || '') + '…';
   document.getElementById('rolenote').textContent = 'your role: ' + data.role;
@@ -729,7 +729,7 @@ async function load(force) {
   data = result.data;
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
-  const signature = JSON.stringify([tab, data.online, data.lastSeen, data.snapshot,
+  const signature = JSON.stringify([tab, data.online, data.status, data.lastSeen, data.snapshot,
                                     (data.evidence || []).length]);
   if (signature === lastSignature && !force) return;
   lastSignature = signature;
