@@ -500,9 +500,9 @@ function settingControl(path, setting, editable) {
   if (!editable) return '<span class="cfg-readonly">' + escapeHtml(String(value)) + '</span>';
 
   if (typeof setting.value === 'boolean') {
-    return '<button class="toggle ' + (value ? 'on' : '') + '" data-cfg="' + escapeHtml(path) +
+    return '<button type="button" class="toggle cfg-toggle ' + (value ? 'on' : '') + '" data-cfg="' + escapeHtml(path) +
       '" data-kind="boolean" role="switch" aria-checked="' + (value ? 'true' : 'false') +
-      '" aria-label="' + escapeHtml(path) + '"><span></span></button>';
+      '" aria-label="Toggle ' + escapeHtml(path) + '" title="' + (value ? 'On' : 'Off') + '"><span></span></button>';
   }
   if (setting.values) {
     return '<select data-cfg="' + escapeHtml(path) + '" data-kind="enum">' +
