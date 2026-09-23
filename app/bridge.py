@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 
 from fastapi import Request
@@ -17,6 +18,8 @@ from fastapi import Request
 from . import db
 from .protocol import MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MediaRequest, SyncRequest
 from .security import HttpError, rate, reply, require, sha256, now
+
+log = logging.getLogger("nexusac.bridge")
 
 BEARER = re.compile(r"^Bearer\s+([A-Za-z0-9_-]{43})$", re.IGNORECASE)
 CLOCK_SKEW_SECONDS = 90
@@ -69,7 +72,19 @@ async def handle(request: Request, action: str):
     if action == "media":
         return await _media(request, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
-    return await _sync(request, server, server_id)
+    try:
+        return await _sync(request, server, server_id)
+    except HttpError:
+        raise
+    except Exception as error:
+        # Keep bridge failures machine-readable. Some reverse proxies replace a
+        # framework 503 body with an empty HTML response, which hides the actual
+        # schema/database problem from the FiveM console.
+        log.exception("[NexusAC bridge] %s failed: %s", action, error)
+        return reply({
+            "error": "Bridge sync could not be stored.",
+            "code": type(error).__name__,
+        }, 503)
 
 
 async def _media(request: Request, server_id: str):
