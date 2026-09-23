@@ -322,12 +322,13 @@ async def _sync(request: Request, server: dict, server_id: str):
             (server_id, now()),
         )
 
-        # One command per poll. Each carries an expected-value check that has to
-        # see the result of the command before it, so they cannot be batched.
+        # Dispatch a small batch per poll. Each command still carries an
+        # expected-value check, so stale edits are refused while several toggles
+        # can reach the server in the same near-real-time sync.
         cur.execute(
             """SELECT id, body, actor_name, expires FROM nx_commands
                 WHERE server=%s AND status IN ('pending','sent') AND expires>%s
-                ORDER BY created, id LIMIT 1""",
+                ORDER BY created, id LIMIT 10""",
             (server_id, now()),
         )
         queued = cur.fetchall()

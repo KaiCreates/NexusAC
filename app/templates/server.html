@@ -705,7 +705,7 @@ async function send(body, label) {
   note(msg, result.ok
     ? label + ' queued. The server picks it up on its next poll, within a few seconds.'
     : result.error, result.ok ? 'good' : 'bad');
-  setTimeout(() => load(true), 2500);
+  setTimeout(() => load(true), 800);
   return result.ok;
 }
 
@@ -921,8 +921,8 @@ async function saveConfig() {
   // Two reloads: the first catches the command being collected, the second the
   // result coming back on the sync after that. Without the second, the panel
   // would sit on "Delivered" until something else triggered a refresh.
-  setTimeout(() => load(true), 2500);
-  setTimeout(() => load(true), 7000);
+  setTimeout(() => load(true), 800);
+  setTimeout(() => load(true), 2200);
   render();
 }
 
@@ -1007,6 +1007,6 @@ document.addEventListener('input', (event) => {
 });
 
 load(true);
-setInterval(() => { if (live && !busy()) load(false); }, 4000);
+setInterval(() => { if (live && !busy()) load(false); }, 1000);
 </script>
 {% endblock %}
