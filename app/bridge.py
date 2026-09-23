@@ -69,6 +69,24 @@ async def handle(request: Request, action: str):
         # detector data was ingested.
         db.execute("UPDATE nx_servers SET last_seen=%s WHERE id=%s", (now(), server_id))
         return reply({"protocol": 1, "ok": True, "serverTime": now(), "degraded": True})
+    if action == "wait":
+        # The FiveM instant channel uses this short-poll endpoint between full
+        # snapshots. It is intentionally bounded and authenticated; ordinary
+        # sync remains the source of truth for acknowledgements.
+        with db.transaction() as cur:
+            cur.execute(
+                """SELECT id, body, actor_name, expires FROM nx_commands
+                   WHERE server=%s AND status='pending' AND expires>%s
+                   ORDER BY created, id LIMIT 10""", (server_id, now()),
+            )
+            queued = cur.fetchall()
+            for item in queued:
+                cur.execute("UPDATE nx_commands SET status='sent' WHERE id=%s", (item["id"],))
+        return reply({
+            "protocol": 1, "serverTime": now(),
+            "commands": [{"id": str(item["id"]), "actor": item["actor_name"],
+                          "expires": int(item["expires"]), **item["body"]} for item in queued],
+        })
     if action == "media":
         return await _media(request, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
