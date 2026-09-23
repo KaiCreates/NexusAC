@@ -24,7 +24,7 @@ from .security import (
 router = APIRouter()
 EMAIL = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
 MIN_PASSWORD = 12
-ONLINE_WINDOW = 30  # a server polls every ~3s; 30s of silence means offline
+ONLINE_WINDOW = 30  # the resource heartbeats about once per second
 
 
 def _online(last_seen: Any) -> bool:

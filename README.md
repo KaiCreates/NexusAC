@@ -47,6 +47,11 @@ set nexus_web_url "https://your-site.vercel.app"
 set nexus_web_token "the-43-character-key"
 ```
 
+The resource accepts either the website origin or a pasted `/api/control/bridge`
+URL and normalizes it before connecting. It authenticates every heartbeat with
+the bearer key, reports the HTTP error in `nexusweb` when a connection fails, and
+backs off automatically during an outage.
+
 `server/sv_web.lua` needs no changes; it already speaks this protocol. It accepts
 an `https://` origin, or `http://` only on localhost.
 
