@@ -21,10 +21,15 @@
       <button class="sidebar-link" data-tab="Bans">{{ ui.icon('ban') }} Bans</button>
       <button class="sidebar-link" data-tab="Evidence">{{ ui.icon('camera') }} Evidence
         <span class="count" id="count-evidence"></span></button>
+      <span class="nav-group">RESEARCH</span>
+      <button class="sidebar-link" data-tab="Activity">{{ ui.icon('activity') }} Activity</button>
+      <button class="sidebar-link" data-tab="Identities">{{ ui.icon('radar') }} Identities</button>
       <span class="nav-group">MEDIA</span>
       <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} Screenshots
         <span class="count" id="count-shots"></span></button>
       <span class="nav-group">MANAGEMENT</span>
+      <button class="sidebar-link" data-tab="Protection">{{ ui.icon('lock') }} Event Protection</button>
+      <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('plug') }} Integrations</button>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} Logs</button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} Configuration</button>
     </nav>
@@ -82,7 +87,8 @@
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
-              'Screenshots', 'Logs', 'Configuration'];
+              'Activity', 'Identities', 'Screenshots', 'Protection', 'Integrations',
+              'Logs', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -385,6 +391,181 @@ function viewEvidence() {
     table(['When', 'Detection', 'Player', 'Confidence', 'Action', 'Screenshots', ''], rows,
       'No evidence recorded', 'A case is created when a detector reaches its confidence gate.'),
     '<span class="badge">' + cases.length + '</span>');
+}
+
+/* ---------------------------------------------------------------- research
+
+   Activity and Identities read their own endpoints rather than the snapshot,
+   because neither fits in a blob that is replaced wholesale every three seconds:
+   the event log is far too large and identities are workspace-wide, not
+   per-server.
+
+   So they render a shell synchronously and fill it afterwards. The fetch is
+   guarded on a cache key, because render() runs on every poll and refetching a
+   page of events every few seconds while somebody reads it would be both
+   wasteful and jumpy. */
+const research = { events: null, eventsKey: '', identities: null, identitiesKey: '' };
+let activityQuery = '';
+let activityKind = 'all';
+let identityQuery = '';
+
+function mount(fn) { setTimeout(fn, 0); }
+
+function viewActivity() {
+  const key = activityQuery + '|' + activityKind;
+  if (research.eventsKey !== key || !research.events) mount(loadActivity);
+
+  const rows = (research.events || []).map((e) => {
+    const when = new Date((e.at || 0) * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const data = Object.entries(e.data || {}).slice(0, 3)
+      .map(([k, v]) => k + '=' + v).join(' · ');
+    return '<tr>' +
+      '<td class="muted mono">' + pad(when.getHours()) + ':' + pad(when.getMinutes()) + ':' +
+        pad(when.getSeconds()) + '</td>' +
+      '<td><span class="badge">' + escapeHtml(e.type) + '</span></td>' +
+      '<td>' + (e.senderName
+        ? (e.sender
+            ? '<a class="text-link" href="/identities?q=' + encodeURIComponent(e.sender) + '">' +
+              escapeHtml(e.senderName) + '</a>'
+            : escapeHtml(e.senderName))
+        : '<span class="muted">—</span>') + '</td>' +
+      '<td>' + escapeHtml(e.targetName || '—') + '</td>' +
+      '<td class="muted mono">' + escapeHtml(short(data, 52) || '—') + '</td></tr>';
+  });
+
+  return offlineNote() +
+    '<div class="rs-bar">' +
+    '<label class="search-field"><input id="act-q" placeholder="Search names, or event_type:playerConnecting" ' +
+      'value="' + escapeHtml(activityQuery) + '"></label>' +
+    '<select id="act-kind" aria-label="Event type">' +
+      ['all', 'playerConnecting', 'playerDropped', 'vehicleSpawned', 'entityCreated',
+       'entityRemoved', 'playerDamaged', 'playerKilled', 'weaponFired', 'explosionEvent',
+       'detection'].map((k) =>
+        '<option value="' + k + '"' + (k === activityKind ? ' selected' : '') + '>' +
+        (k === 'all' ? 'All events' : k) + '</option>').join('') +
+    '</select>' +
+    '<a class="button light small" href="/events">Open full log ' + icon('arrow-up-right', 14) + '</a>' +
+    '</div>' +
+    panel('Activity',
+      table(['Time', 'Event', 'Player', 'Target', 'Detail'], rows,
+        research.events === null ? 'Loading…' : 'Nothing recorded yet',
+        research.events === null
+          ? 'Reading the event log.'
+          : 'Joins, spawns, damage and detections appear here as the server reports them. ' +
+            'Noisy event types are sampled before they leave the game server.'),
+      '<span class="badge">' + (research.events ? research.events.length : 0) + '</span>');
+}
+
+async function loadActivity() {
+  const key = activityQuery + '|' + activityKind;
+  research.eventsKey = key;
+  const params = new URLSearchParams({ q: activityQuery, size: '100', server: SERVER });
+  if (activityKind !== 'all') params.set('type', activityKind);
+  const result = await api('/events?' + params.toString());
+  if (!result.ok) return note(msg, result.error, 'bad');
+  research.events = result.data.rows || [];
+  if (tab === 'Activity') document.getElementById('view').innerHTML = viewActivity();
+}
+
+function viewIdentities() {
+  if (research.identitiesKey !== identityQuery || !research.identities) mount(loadIdentities);
+
+  const cards = (research.identities || []).map((row) => {
+    const badges = Object.keys(row.kinds || {})
+      .filter((k) => k !== 'name')
+      .map((k) => '<span class="badge">' + escapeHtml(k) + ' ' +
+        (row.kinds[k] || []).length + '</span>').join(' ');
+    return '<tr>' +
+      '<td><b>' + escapeHtml(row.name) + '</b>' + (row.banned
+        ? ' <span class="badge danger">banned</span>' : '') +
+        '<div class="muted mono">' + escapeHtml(short(row.uid, 46)) + '</div></td>' +
+      '<td>' + (badges || '<span class="muted">—</span>') + '</td>' +
+      '<td class="muted">' + escapeHtml(ago(row.lastSeen, data.serverTime)) + '</td>' +
+      '<td style="text-align:right">' +
+        '<a class="button small" href="/identities?q=' + encodeURIComponent(row.uid) + '">Investigate</a>' +
+      '</td></tr>';
+  });
+
+  return '<div class="rs-bar">' +
+    '<label class="search-field"><input id="idn-q" ' +
+      'placeholder="License, Discord ID, Steam ID, IP, or a player name" value="' +
+      escapeHtml(identityQuery) + '"></label>' +
+    '<a class="button light small" href="/identities">Open Identities ' +
+      icon('arrow-up-right', 14) + '</a></div>' +
+    '<p class="panel-note" style="margin:0 0 14px">Identities are shared across every server in ' +
+    'this workspace, so an account banned elsewhere still shows here.</p>' +
+    panel('Identities',
+      table(['Account', 'Identifiers', 'Last seen', ''], cards,
+        research.identities === null ? 'Loading…' : 'No accounts found',
+        research.identities === null
+          ? 'Searching.'
+          : 'Nothing matched. An account appears once a server running NexusAC has seen it.'),
+      '<span class="badge">' + (research.identities ? research.identities.length : 0) + '</span>');
+}
+
+async function loadIdentities() {
+  research.identitiesKey = identityQuery;
+  const result = await api('/identities?q=' + encodeURIComponent(identityQuery) + '&size=25');
+  if (!result.ok) return note(msg, result.error, 'bad');
+  research.identities = result.data.results || [];
+  if (tab === 'Identities') document.getElementById('view').innerHTML = viewIdentities();
+}
+
+/* ---- Event Protection: the guarded net events and how they are holding up. */
+function viewProtection() {
+  const actions = ((data.snapshot || {}).events) || [];
+  const rows = actions.map((a) => {
+    const total = (a.accepted || 0) + (a.rejected || 0);
+    const share = total ? Math.round(((a.rejected || 0) / total) * 100) : 0;
+    return '<tr class="' + (share >= 50 ? 'hot' : share > 0 ? 'flag' : '') + '">' +
+      '<td><b class="mono">' + escapeHtml(a.name) + '</b></td>' +
+      '<td class="muted">' + escapeHtml(a.resource || '—') + '</td>' +
+      '<td class="muted">' + num(a.perMinute) + '/min · burst ' + num(a.burst) + '</td>' +
+      '<td>' + num(a.accepted) + '</td>' +
+      '<td>' + (a.rejected ? '<span class="badge danger">' + num(a.rejected) + '</span>'
+                           : '<span class="muted">0</span>') + '</td></tr>';
+  });
+  const blocked = actions.reduce((sum, a) => sum + (a.rejected || 0), 0);
+
+  return offlineNote() +
+    '<p class="panel-note" style="margin:0 0 14px">Every net event listed here is rate limited on ' +
+    'the server. A rejection is a call that exceeded its budget and never reached the handler.</p>' +
+    panel('Event Protection',
+      table(['Event', 'Resource', 'Budget', 'Accepted', 'Rejected'], rows,
+        'No guarded events', 'The resource reports its protected actions with each snapshot.'),
+      blocked ? '<span class="badge danger">' + num(blocked) + ' rejected</span>'
+              : '<span class="badge success">nothing rejected</span>');
+}
+
+/* ---- Integrations: what the resource can see alongside itself. */
+function viewIntegrations() {
+  const integrations = (data.snapshot || {}).integrations || {};
+  const screens = integrations.screenshots;
+  const website = integrations.website || {};
+
+  const core = [
+    ['Nexus-Screens', screens === 'started' ? 'running' : (screens || 'not reporting'),
+     screens === 'started', 'Screenshot capture. Without it, evidence captures are recorded as unavailable.'],
+    ['Website bridge', website.connected ? 'connected' : 'disconnected', !!website.connected,
+     'This console. ' + (website.configured ? 'Configured in server.cfg.' : 'Not configured.')],
+  ].map(([name, state, ok, why]) =>
+    '<tr><td><b>' + escapeHtml(name) + '</b><div class="muted">' + escapeHtml(why) + '</div></td>' +
+    '<td><span class="badge ' + (ok ? 'success' : 'warning') + '">' + escapeHtml(state) +
+    '</span></td></tr>');
+
+  const hooks = (integrations.webhooks || []).map((c) =>
+    '<tr class="' + (c.configured && c.status === 'failing' ? 'hot' : '') + '">' +
+    '<td>' + escapeHtml(c.category) + '</td>' +
+    '<td><span class="badge ' + (c.configured ? 'success' : '') + '">' +
+      (c.configured ? 'configured' : 'not set') + '</span></td>' +
+    '<td class="muted">' + num(c.sent) + ' sent · ' + num(c.failed) + ' failed</td></tr>');
+
+  return offlineNote() +
+    panel('Resources', table(['Integration', 'State'], core,
+      'Nothing reported', 'The resource reports its integrations with each snapshot.')) +
+    panel('Discord webhooks', table(['Channel', 'State', 'Delivery'], hooks,
+      'No webhook channels', 'Configure Discord channels in the resource to see delivery health.'));
 }
 
 function viewLogs() {
@@ -713,7 +894,9 @@ function commandLog() {
 const VIEWS = {
   Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
-  Screenshots: viewScreenshots, Logs: viewLogs, Configuration: viewConfig,
+  Activity: viewActivity, Identities: viewIdentities,
+  Screenshots: viewScreenshots, Protection: viewProtection,
+  Integrations: viewIntegrations, Logs: viewLogs, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -1095,6 +1278,12 @@ document.addEventListener('change', async (event) => {
     return render();
   }
 
+  if (target.id === 'act-kind') {
+    activityKind = target.value;
+    research.eventsKey = '';
+    return void loadActivity();
+  }
+
   const detectorId = target.dataset.detector;
   if (detectorId) {
     return void send({ type: 'detector', detector: detectorId, mode: target.value,
@@ -1166,7 +1355,27 @@ function refreshSaveButton() {
 }
 
 /* Search filters in place for the same reason. */
+/* The research searches are debounced rather than re-rendered per keystroke:
+   each one is a round trip, and the ban search above can repaint from memory. */
+let researchTimer = null;
+function researchSearch(setter) {
+  return (value) => {
+    setter(value);
+    clearTimeout(researchTimer);
+    researchTimer = setTimeout(() => {
+      research.eventsKey = '';
+      research.identitiesKey = '';
+      if (tab === 'Activity') loadActivity();
+      if (tab === 'Identities') loadIdentities();
+    }, 300);
+  };
+}
+const setActivityQuery = researchSearch((v) => { activityQuery = v; });
+const setIdentityQuery = researchSearch((v) => { identityQuery = v; });
+
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'act-q') return void setActivityQuery(event.target.value);
+  if (event.target.id === 'idn-q') return void setIdentityQuery(event.target.value);
   if (event.target.id === 'ban-search') {
     banQuery = event.target.value;
     banPage = 1;

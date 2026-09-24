@@ -160,6 +160,16 @@ def search(
     params: list[Any] = [workspace]
 
     if server:
+        # The filter arrives from a query string, and Postgres raises on a
+        # malformed uuid rather than returning nothing. Checking it here turns a
+        # 500 into an empty result, which is the honest answer to "events for a
+        # server that does not exist".
+        import uuid as _uuid
+        try:
+            _uuid.UUID(str(server))
+        except (ValueError, AttributeError, TypeError):
+            return {"query": query, "total": 0, "capped": False,
+                    "page": page, "size": size, "rows": []}
         where.append("server = %s")
         params.append(server)
 
