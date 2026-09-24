@@ -4481,3 +4481,31 @@ th.ev-cols button:hover { color: #f5f5f5; }
    .dashboard-title, .stats-grid and .form-message. This is the standard guard
    the HTML spec assumes is present. */
 [hidden] { display: none !important; }
+/* ---- Configuration: long values and sub-groups -------------------------
+   A row normally puts the label and control side by side. That breaks down for
+   a free-text value that can run to thousands of characters -- the vehicle
+   model lists -- so those stack and take the full card width instead. */
+.cfg-row.wide {
+  display: block;
+}
+.cfg-row.wide .cfg-label { margin-bottom: 9px; }
+.cfg-row.wide .cfg-control { justify-content: stretch; min-width: 0; }
+.cfg-area {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  background: var(--page);
+  color: #e8e8ea;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: 0;
+  resize: vertical;
+}
+.cfg-area:focus { border-color: #3a3a40; }
+
+/* The label must be allowed to shrink, or a long path pushes the control off
+   the right edge of a narrow card instead of wrapping. */
+.cfg-label { flex: 1 1 auto; }

@@ -705,10 +705,14 @@ const CONFIG_TABS = {
   Core: ['general', 'risk', 'heartbeat', 'panel'],
   Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
               'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
-              'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing'],
+              'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing',
+              // These eight were mapped to no tab at all, so they collected in
+              // "Other" -- eight real detectors sitting in a bucket nobody
+              // thinks to open.
+              'armory', 'backdoor', 'ocr', 'playerstate', 'rpfblock', 'sensors', 'social'],
   Entity: ['vehicles', 'entitybehaviour'],
   Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
-                'honeypot', 'trust', 'txadmin'],
+                'honeypot', 'trust', 'txadmin', 'connect'],
 };
 const GROUP_ICONS = {
   general: 'settings', risk: 'radar', heartbeat: 'activity', combat: 'scan-line',
@@ -718,6 +722,8 @@ const GROUP_ICONS = {
   ipbans: 'ban', identityguard: 'key', enforce: 'shield-check', evidence: 'camera',
   log: 'log', honeypot: 'radar', panel: 'grid', griefing: 'ban', trust: 'shield-check',
   txadmin: 'server', targeting: 'scan-line', integrity: 'shield-check', lua: 'braces',
+  armory: 'ban', backdoor: 'key', ocr: 'camera', playerstate: 'users',
+  rpfblock: 'lock', sensors: 'radar', social: 'users', connect: 'plug',
 };
 
 let configEdits = {};
@@ -732,10 +738,28 @@ let banSelected = [];
 const prettyLabel = (part) => part
   .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
   .replace(/^./, (c) => c.toUpperCase());
-const groupOf = (path) => (path.includes('.') ? path.split('.')[0] : 'general');
+/* Cards are grouped by the path prefix, and a path with three or more segments
+   groups on the first TWO.
+
+   Without that, everything under vehicles.* landed in a single card: the speed
+   tiers, the per-type backstops, the sampling knobs and the enable switch, 19
+   rows deep, sitting beside twenty cards holding one row each. Splitting on the
+   second segment gives Vehicles, Vehicles · Speed, Vehicles · Backstop and
+   Vehicles · Sustain, which is how they are actually reasoned about. */
+const groupOf = (path) => {
+  const parts = path.split('.');
+  if (parts.length >= 3) return parts[0] + '.' + parts[1];
+  return parts.length > 1 ? parts[0] : 'general';
+};
+
+/* The tab lookup keys off the root segment, so a sub-group inherits its
+   parent's tab instead of falling through to Other. */
+const rootOf = (group) => group.split('.')[0];
+
 function tabOf(group) {
+  const root = rootOf(group);
   for (const tab of Object.keys(CONFIG_TABS)) {
-    if (CONFIG_TABS[tab].includes(group)) return tab;
+    if (CONFIG_TABS[tab].includes(root)) return tab;
   }
   return 'Other';
 }
@@ -757,10 +781,21 @@ function settingControl(path, setting, editable) {
       '</select>';
   }
   const numeric = typeof setting.value === 'number';
+
+  // A long list -- the per-tier vehicle models are the case that forced this --
+  // gets a textarea. Editing a comma-separated list of forty model names
+  // through a 150px input is not an editing experience.
+  if (!numeric && (setting.maxLen || 0) > 300) {
+    return '<textarea data-cfg="' + escapeHtml(path) + '" data-kind="string" rows="3" ' +
+      'maxlength="' + Number(setting.maxLen) + '" class="cfg-area" spellcheck="false">' +
+      escapeHtml(String(value)) + '</textarea>';
+  }
+
   return '<input data-cfg="' + escapeHtml(path) + '" data-kind="' +
     (numeric ? 'number' : 'string') + '"' + (numeric ? ' type="number"' : '') +
     (setting.lo !== undefined ? ' min="' + setting.lo + '"' : '') +
     (setting.hi !== undefined ? ' max="' + setting.hi + '"' : '') +
+    (setting.maxLen ? ' maxlength="' + Number(setting.maxLen) + '"' : '') +
     ' value="' + escapeHtml(String(value)) + '" class="cfg-input' + (numeric ? ' cfg-num' : '') + '">';
 }
 
@@ -834,15 +869,22 @@ function viewConfig() {
       const rest = path.slice(group.length + 1) || path;
       const range = (setting.lo !== undefined && setting.hi !== undefined)
         ? setting.lo + '–' + setting.hi : '';
-      return '<div class="cfg-row' + (staged ? ' staged' : '') + '">' +
+      // A long free-text value -- a model list can run to thousands of
+      // characters -- cannot share a row with its label. Those stack instead,
+      // with the field on its own line at full width.
+      const long = typeof setting.value === 'string' && (setting.maxLen || 0) > 300;
+      return '<div class="cfg-row' + (staged ? ' staged' : '') + (long ? ' wide' : '') + '">' +
         '<div class="cfg-label"><b>' + escapeHtml(prettyLabel(rest)) + '</b><small>' +
         escapeHtml(path) + (range ? ' · ' + escapeHtml(range) : '') +
         (setting.live ? '' : ' · needs restart') + '</small></div>' +
         '<div class="cfg-control">' + settingControl(path, setting, editable) + '</div></div>';
     }).join('');
+    // "vehicles.speed" reads as "Vehicles · Speed", and the icon comes from the
+    // root segment so a sub-group keeps its parent's glyph.
+    const title = group.split('.').map(prettyLabel).join(' · ');
     return '<section class="panel cfg-card"><div class="cfg-card-head">' +
-      '<span class="protection-icon">' + icon(GROUP_ICONS[group] || 'sliders', 17) + '</span>' +
-      '<div><b>' + escapeHtml(prettyLabel(group)) + '</b><small>' + groups[group].length +
+      '<span class="protection-icon">' + icon(GROUP_ICONS[rootOf(group)] || 'sliders', 17) + '</span>' +
+      '<div><b>' + escapeHtml(title) + '</b><small>' + groups[group].length +
       ' setting' + (groups[group].length === 1 ? '' : 's') + '</small></div></div>' +
       rows + '</section>';
   }).join('');
