@@ -169,6 +169,9 @@ function viewPlayers() {
       ? '<button class="button small" data-act="screenshot" data-src="' + player.src + '">Shot</button> ' +
         '<button class="button small" data-act="freeze" data-src="' + player.src + '" data-on="' +
           (!player.frozen) + '">' + (player.frozen ? 'Unfreeze' : 'Freeze') + '</button> ' +
+        // Warn first: it is the mild option, so it sits before Kick rather
+        // than after Ban where nobody would reach for it.
+        '<button class="button small" data-act="warn" data-src="' + player.src + '">Warn</button> ' +
         '<button class="button small" data-act="kick" data-src="' + player.src + '">Kick</button>' +
         (['owner', 'administrator'].includes(data.role)
           ? ' <button class="button small" data-act="ban" data-src="' + player.src + '">Ban</button>' : '')
@@ -812,6 +815,11 @@ document.addEventListener('click', async (event) => {
       const on = action.dataset.on === 'true';
       return reasonDialog((on ? 'Freeze ' : 'Unfreeze ') + player.name, '',
         (reason) => send({ type: 'freeze', ...base, on, reason }, on ? 'Freeze' : 'Unfreeze'));
+    }
+    if (act === 'warn') {
+      return reasonDialog('Warn ' + player.name,
+        'Recorded against their identity and shown to them. They stay on the server.',
+        (reason) => send({ type: 'warn', ...base, reason }, 'Warn'));
     }
     if (act === 'kick') {
       return reasonDialog('Kick ' + player.name, 'They can reconnect immediately.',

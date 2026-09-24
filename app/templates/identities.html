@@ -14,11 +14,19 @@
       {{ ui.icon('chevron-down', 13) }}
     </button>
     <nav aria-label="Dashboard navigation">
-      <span class="nav-group">WORKSPACE</span>
+      <span class="nav-group">OVERVIEW</span>
       <a class="sidebar-link" href="/dashboard">{{ ui.icon('server') }} Servers</a>
+      <a class="sidebar-link" href="/dashboard?view=commands">{{ ui.icon('sliders') }} Commands</a>
+      <span class="nav-group">SECURITY</span>
       <a class="sidebar-link" href="/events">{{ ui.icon('log') }} Events</a>
+      <a class="sidebar-link" href="/events">{{ ui.icon('activity') }} Detection logs</a>
       <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
       <a class="sidebar-link active" href="/identities">{{ ui.icon('radar') }} Identities</a>
+      <a class="sidebar-link" href="/events">{{ ui.icon('camera') }} Evidence</a>
+      <span class="nav-group">MANAGEMENT</span>
+      <a class="sidebar-link" href="/dashboard?view=staff">{{ ui.icon('users') }} Staff</a>
+      <a class="sidebar-link" href="/dashboard?view=audit">{{ ui.icon('log') }} Audit log</a>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('settings') }} Configuration</a>
       <span class="nav-group">HELP</span>
       <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
       <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>

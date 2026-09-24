@@ -14,16 +14,21 @@
       {{ ui.icon('chevron-down', 13) }}
     </button>
     <nav aria-label="Dashboard navigation">
-      <span class="nav-group">WORKSPACE</span>
+      <span class="nav-group">OVERVIEW</span>
       <button class="sidebar-link active" data-view="servers">{{ ui.icon('server') }} Servers</button>
       <button class="sidebar-link" data-view="commands">{{ ui.icon('sliders') }} Commands</button>
+      <span class="nav-group">SECURITY</span>
       <a class="sidebar-link" href="/events">{{ ui.icon('log') }} Events</a>
+      <a class="sidebar-link" href="/events">{{ ui.icon('activity') }} Detection logs</a>
       <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
       <a class="sidebar-link" href="/identities">{{ ui.icon('radar') }} Identities</a>
+      <a class="sidebar-link" href="/events">{{ ui.icon('camera') }} Evidence</a>
       <span class="nav-group">MANAGEMENT</span>
       <button class="sidebar-link" data-view="staff">{{ ui.icon('users') }} Staff</button>
       <button class="sidebar-link" data-view="audit">{{ ui.icon('log') }} Audit log</button>
-      <span class="nav-group">HELP</span>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('settings') }} Configuration</a>
+      <span class="nav-group">SYSTEM</span>
+      <a class="sidebar-link" href="/docs">{{ ui.icon('activity') }} Webhooks &amp; API</a>
       <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
       <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
     </nav>
@@ -69,7 +74,9 @@
 <script>
 const msg = document.getElementById('msg');
 let state = null;
-let view = sessionStorage.getItem('nx_ws_view') || 'servers';
+const requestedView = new URLSearchParams(location.search).get('view');
+let view = ['servers', 'commands', 'staff', 'audit'].includes(requestedView)
+  ? requestedView : (sessionStorage.getItem('nx_ws_view') || 'servers');
 
 const TITLES = {
   servers: ['Dashboard', 'A clear view of your protected servers and workspace activity.'],
