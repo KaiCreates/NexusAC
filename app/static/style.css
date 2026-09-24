@@ -3646,10 +3646,10 @@ table td .muted { font-size: 11px; }
    Screenshots: its own section — a rail of who you can capture, then the wall.
    --------------------------------------------------------------------------- */
 
-.shot-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 14px; align-items: start; }
+.shot-layout { display: block; }
 .shot-rail {
   background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-  overflow: hidden; position: sticky; top: 16px;
+  overflow: hidden; margin-bottom: 14px;
 }
 .shot-rail-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -3661,29 +3661,32 @@ table td .muted { font-size: 11px; }
 }
 .shot-rail-row:last-child { border-bottom: 0; }
 .shot-rail-row:hover { background: rgba(255, 255, 255, .03); }
+.shot-rail { display: flex; flex-wrap: wrap; align-items: center; }
+.shot-rail-head { flex: 0 0 170px; border-right: 1px solid var(--border); }
+.shot-rail-row { display: inline-flex; width: auto; min-width: 190px; border-bottom: 0; border-right: 1px solid var(--border); }
 .shot-rail-empty { padding: 22px 15px; color: #72727d; font-size: 11.5px; }
 
 .shot-main { padding: 0; }
 .shot-main .panel-heading { padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .shot-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px; padding: 15px;
 }
 .shot-tile {
-  padding: 0; text-align: left; border: 1px solid var(--border); border-radius: 7px;
-  overflow: hidden; background: #0c0c0f; cursor: pointer; transition: border-color 140ms;
+  padding: 0; text-align: left; border: 1px solid var(--border); border-radius: 15px;
+  overflow: hidden; background: #0c0c0f; cursor: pointer; transition: border-color 140ms, transform 140ms;
 }
-.shot-tile:hover { border-color: #4a4a55; }
-.shot-tile img { display: block; width: 100%; height: 140px; object-fit: cover; background: #141418; }
-.shot-meta { padding: 10px 12px; }
-.shot-meta b { font-size: 12px; font-weight: 500; display: block; }
+.shot-tile:hover { border-color: #666; transform: translateY(-1px); }
+.shot-tile img { display: block; width: 100%; height: 205px; object-fit: cover; background: #141418; }
+.shot-meta { padding: 14px 16px 16px; min-height: 58px; }
+.shot-meta b { font-size: 14px; font-weight: 600; display: block; color: #f4f4f4; }
 .shot-meta small { font-size: 10.5px; color: #72727d; }
 .shot-full img { width: 100%; border-radius: 7px; border: 1px solid var(--border); }
 
 @media (max-width: 900px) {
-  .shot-layout { grid-template-columns: minmax(0, 1fr); }
-  .shot-rail { position: static; }
+  .shot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (max-width: 650px) { .shot-grid { grid-template-columns: 1fr; } .shot-rail-head { flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--border); } }
 
 /* Workspace switcher rows. */
 .ws-list { display: grid; gap: 8px; }
