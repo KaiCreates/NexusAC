@@ -924,8 +924,24 @@ function renderStats() {
     '<small>' + escapeHtml(card[2]) + '</small></article>').join('');
 }
 
+/* Which tabs get the big page header.
+
+   The eyebrow, the server name, the subtitle and the eight stat tiles are an
+   introduction to the console. Repeating them above every table said the same
+   thing thirteen times and pushed the actual content of each tab below the
+   fold. Overview keeps them because that IS the introduction; Screenshots keeps
+   the title block alone because its heading is part of that page's design. */
+const HEADER_TABS = ['Overview', 'Screenshots'];
+const STATS_TABS = ['Overview'];
+
 function render() {
+  const wantsHeader = HEADER_TABS.includes(tab);
+  const wantsStats = STATS_TABS.includes(tab);
+
   document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
+  document.querySelector('.dashboard-title').hidden = !wantsHeader;
+  document.getElementById('stats').hidden = !wantsStats;
+
   document.getElementById('eyebrow').textContent =
     tab === 'Screenshots' ? 'WORKSPACE / SCREENSHOTS' : 'COMMAND CENTER';
   document.getElementById('name').textContent = tab === 'Screenshots' ? 'Screenshots' : (data.name || 'Server');
@@ -946,8 +962,8 @@ function render() {
   document.getElementById('count-evidence').textContent = (data.evidence || []).length || '';
   const shotCount = (data.evidence || []).reduce((sum, e) => sum + (e.images || 0), 0);
   document.getElementById('count-shots').textContent = shotCount || '';
-  document.getElementById('stats').style.display = tab === 'Screenshots' ? 'none' : '';
-  renderStats();
+  // Building eight tiles nobody is going to see is wasted work on every poll.
+  if (wantsStats) renderStats();
   document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
     link.classList.toggle('active', link.dataset.tab === tab));
   document.getElementById('view').innerHTML = (VIEWS[tab] || viewOverview)();

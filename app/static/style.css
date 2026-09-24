@@ -4475,3 +4475,9 @@ th.ev-cols button:hover { color: #f5f5f5; }
 }
 .rs-bar select:focus { border-color: #3a3a40; }
 .rs-bar .button { flex: 0 0 auto; }
+/* The hidden attribute must actually hide.
+   Several blocks here set display:flex / display:grid, and a class rule beats a
+   bare [hidden] selector -- so `el.hidden = true` silently did nothing on
+   .dashboard-title, .stats-grid and .form-message. This is the standard guard
+   the HTML spec assumes is present. */
+[hidden] { display: none !important; }
