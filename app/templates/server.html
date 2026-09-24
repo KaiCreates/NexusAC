@@ -572,7 +572,7 @@ function viewWebhooks() {
 
   const cards = WEBHOOK_CATEGORIES.map(([key, label, why]) => {
     const c = byCategory[key] || {};
-    const configured = key === 'main' ? undefined : c.configured;
+    const configured = !!c.configured;
     const inactive = key !== 'main' && !separate;
 
     const state = inactive
@@ -597,8 +597,8 @@ function viewWebhooks() {
       health +
       (editable
         ? '<div class="wh-form">' +
-          '<input type="password" class="cfg-input wh-input" data-wh="' + key + '" ' +
-          'placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="cfg-input wh-input" data-wh="' + key + '" ' +
+          'placeholder="Paste Discord webhook URL" autocomplete="url" spellcheck="false">' +
           '<button class="button small light" data-wh-save="' + key + '">Save</button>' +
           (configured ? '<button class="button small" data-wh-clear="' + key + '">Clear</button>' : '') +
           '</div>'
@@ -608,9 +608,9 @@ function viewWebhooks() {
 
   return offlineNote() +
     '<div class="notice" style="margin-bottom:16px">' +
-    '<b>URLs are write-only.</b> The server never sends a webhook URL back to this page, so an ' +
-    'existing one cannot be displayed or copied — only replaced or cleared. Paste a new URL to ' +
-    'change a channel.</div>' +
+    '<b>Webhook settings</b> A configured channel is shown as active after the server accepts it. ' +
+    'For safety, the full Discord URL is never displayed again; paste a new URL to replace it or use ' +
+    'Clear to remove it.</div>' +
     panel('Routing',
       '<div class="cfg-row"><div class="cfg-label"><b>Separate channel per category</b>' +
       '<small>webhooks.separate · off sends everything to the Everything channel</small></div>' +
@@ -1342,8 +1342,11 @@ document.addEventListener('click', async (event) => {
     const field = document.querySelector('[data-wh="' + key + '"]');
     const url = (field && field.value || '').trim();
     if (!url) return note(msg, 'Paste a webhook URL first.', 'bad');
-    await send({ type: 'webhook', category: key, url }, key + ' webhook');
-    if (field) field.value = '';
+    const ok = await send({ type: 'webhook', category: key, url }, key + ' webhook');
+    if (field && ok) {
+      field.value = '';
+      field.placeholder = 'Saved — paste a new URL to replace it';
+    }
     return;
   }
 
