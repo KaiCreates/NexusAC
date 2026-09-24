@@ -269,6 +269,20 @@ class DetectorCommand(BaseModel):
     expected: Literal["disabled", "observe", "enforce"]
 
 
+class WebhookCommand(BaseModel):
+    """Set or clear one Discord webhook channel.
+
+    Write only, and it carries no `expected`: the resource never hands a webhook
+    URL back out, so there is nothing to compare against. An empty url clears
+    the channel.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["webhook"]
+    category: Literal["main", "bans", "kicks", "detections", "combat",
+                      "entities", "economy", "resources", "admin", "errors"]
+    url: Annotated[str, Field(max_length=250)] = ""
+
+
 class PunishCommand(BaseModel):
     """What ONE detection of a signal kind does on its own.
 
@@ -287,6 +301,7 @@ Command = Annotated[
     Union[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
         UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
+        WebhookCommand,
     ],
     Field(discriminator="type"),
 ]

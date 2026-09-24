@@ -29,7 +29,8 @@
         <span class="count" id="count-shots"></span></button>
       <span class="nav-group">MANAGEMENT</span>
       <button class="sidebar-link" data-tab="Protection">{{ ui.icon('lock') }} Event Protection</button>
-      <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('plug') }} Integrations</button>
+      <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} Webhooks</button>
+      <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} Integrations</button>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} Logs</button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} Configuration</button>
     </nav>
@@ -87,8 +88,8 @@
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
-              'Activity', 'Identities', 'Screenshots', 'Protection', 'Integrations',
-              'Logs', 'Configuration'];
+              'Activity', 'Identities', 'Screenshots', 'Protection', 'Webhooks',
+              'Integrations', 'Logs', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -538,6 +539,93 @@ function viewProtection() {
               : '<span class="badge success">nothing rejected</span>');
 }
 
+/* ---- Webhooks: one Discord channel per log category.
+
+   URLs are write-only. The resource never sends one back, so this page shows
+   whether a channel is configured and how its deliveries are going, and lets
+   you replace or clear it -- but it cannot show you what is there. A Discord
+   webhook URL is a bearer credential: anyone who can read it can post to that
+   channel as you, so it is not worth putting on a screen to be shoulder-surfed
+   or screenshotted into a support thread. */
+const WEBHOOK_CATEGORIES = [
+  ['main', 'Everything', 'Used for any category without its own channel.'],
+  ['bans', 'Bans', 'Every ban, automatic or by staff.'],
+  ['kicks', 'Kicks', 'Every kick, including escalated warnings.'],
+  ['detections', 'Detections', 'Risk signals as detectors raise them.'],
+  ['combat', 'Combat', 'Weapon, damage and aim findings.'],
+  ['entities', 'Entities', 'Spawns that were denied or flagged.'],
+  ['economy', 'Economy', 'Money and inventory findings.'],
+  ['resources', 'Resources', 'Resource start, stop and integrity changes.'],
+  ['admin', 'Staff actions', 'What your own staff did, kept apart from detections.'],
+  ['errors', 'Errors', 'The anti-cheat reporting its own failures.'],
+];
+
+function viewWebhooks() {
+  const integrations = (data.snapshot || {}).integrations || {};
+  const channels = integrations.webhooks || [];
+  const byCategory = {};
+  channels.forEach((c) => { byCategory[c.category] = c; });
+
+  const separate = !!integrations.webhookSeparate;
+  const queued = integrations.webhookQueued || 0;
+  const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+
+  const cards = WEBHOOK_CATEGORIES.map(([key, label, why]) => {
+    const c = byCategory[key] || {};
+    const configured = key === 'main' ? undefined : c.configured;
+    const inactive = key !== 'main' && !separate;
+
+    const state = inactive
+      ? '<span class="badge">routed to Everything</span>'
+      : configured === undefined
+        ? ''
+        : (configured
+            ? '<span class="badge ' + (c.status === 'failing' ? 'danger' : 'success') + '">' +
+              escapeHtml(c.status === 'failing' ? 'failing' : 'configured') + '</span>'
+            : '<span class="badge">not set</span>');
+
+    const health = (c.sent || c.failed)
+      ? '<div class="wh-health">' + num(c.sent) + ' sent · ' + num(c.failed) + ' failed' +
+        (c.lastAt ? ' · last ' + escapeHtml(ago(c.lastAt, data.serverTime)) : '') +
+        (c.lastError ? '<div class="wh-error">' + escapeHtml(short(c.lastError, 120)) + '</div>' : '') +
+        '</div>'
+      : '';
+
+    return '<article class="wh-card' + (inactive ? ' muted-card' : '') + '">' +
+      '<div class="wh-head"><div><b>' + escapeHtml(label) + '</b>' +
+      '<small>' + escapeHtml(why) + '</small></div>' + state + '</div>' +
+      health +
+      (editable
+        ? '<div class="wh-form">' +
+          '<input type="password" class="cfg-input wh-input" data-wh="' + key + '" ' +
+          'placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false">' +
+          '<button class="button small light" data-wh-save="' + key + '">Save</button>' +
+          (configured ? '<button class="button small" data-wh-clear="' + key + '">Clear</button>' : '') +
+          '</div>'
+        : '') +
+      '</article>';
+  }).join('');
+
+  return offlineNote() +
+    '<div class="notice" style="margin-bottom:16px">' +
+    '<b>URLs are write-only.</b> The server never sends a webhook URL back to this page, so an ' +
+    'existing one cannot be displayed or copied — only replaced or cleared. Paste a new URL to ' +
+    'change a channel.</div>' +
+    panel('Routing',
+      '<div class="cfg-row"><div class="cfg-label"><b>Separate channel per category</b>' +
+      '<small>webhooks.separate · off sends everything to the Everything channel</small></div>' +
+      '<div class="cfg-control">' +
+      (editable
+        ? '<button type="button" class="toggle cfg-toggle ' + (separate ? 'on' : '') +
+          '" data-cfg="webhooks.separate" data-kind="boolean" role="switch" ' +
+          'aria-checked="' + separate + '" aria-label="Toggle separate webhooks"><span></span></button>'
+        : '<span class="cfg-readonly">' + separate + '</span>') +
+      '</div></div>',
+      queued ? '<span class="badge warning">' + num(queued) + ' queued</span>'
+             : '<span class="badge success">nothing queued</span>') +
+    '<div class="wh-grid">' + cards + '</div>';
+}
+
 /* ---- Integrations: what the resource can see alongside itself. */
 function viewIntegrations() {
   const integrations = (data.snapshot || {}).integrations || {};
@@ -938,7 +1026,8 @@ const VIEWS = {
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
   Activity: viewActivity, Identities: viewIdentities,
   Screenshots: viewScreenshots, Protection: viewProtection,
-  Integrations: viewIntegrations, Logs: viewLogs, Configuration: viewConfig,
+  Webhooks: viewWebhooks, Integrations: viewIntegrations,
+  Logs: viewLogs, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -1244,6 +1333,28 @@ document.addEventListener('click', async (event) => {
   }
 
   if (event.target.closest('#cfg-save')) return saveConfig();
+
+  /* ---- webhooks ---- */
+
+  const whSave = event.target.closest('[data-wh-save]');
+  if (whSave) {
+    const key = whSave.dataset.whSave;
+    const field = document.querySelector('[data-wh="' + key + '"]');
+    const url = (field && field.value || '').trim();
+    if (!url) return note(msg, 'Paste a webhook URL first.', 'bad');
+    await send({ type: 'webhook', category: key, url }, key + ' webhook');
+    if (field) field.value = '';
+    return;
+  }
+
+  const whClear = event.target.closest('[data-wh-clear]');
+  if (whClear) {
+    const key = whClear.dataset.whClear;
+    if (!confirm('Clear the ' + key + ' webhook?\n\nThat category will fall back to the ' +
+                 'Everything channel, or stop posting if that is unset too.')) return;
+    await send({ type: 'webhook', category: key, url: '' }, key + ' webhook');
+    return;
+  }
 
   /* ---- screenshots ---- */
 
