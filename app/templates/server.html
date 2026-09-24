@@ -470,8 +470,10 @@ function viewScreenshots() {
           '<img src="' + url + '" alt="Screenshot for ' + escapeHtml(item.detection || 'case') + '" ' +
           'loading="lazy">' +
           '<div class="shot-meta"><b>' + escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
-          '<small>' + escapeHtml(item.detection || '—') + ' · ' +
-          escapeHtml(ago(item.at, data.serverTime)) + '</small></div></button>';
+          '<small>' + escapeHtml(item.detection || '—') +
+          (item.confidence !== undefined ? ' · ' + num(item.confidence) + '% confidence' : '') +
+          ' · ' + escapeHtml(item.id || '') + ' · ' + escapeHtml(ago(item.at, data.serverTime)) +
+          '</small></div></button>';
       }).join('') + '</div>'
     : '<div class="empty-state"><h3>No screenshots yet</h3><p>' +
       'Press the camera next to a player to request one. It arrives on the next poll or two, ' +
@@ -723,7 +725,11 @@ function renderStats() {
 }
 
 function render() {
-  document.getElementById('name').textContent = data.name || 'Server';
+  document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
+  document.getElementById('name').textContent = tab === 'Screenshots' ? 'Screenshots' : (data.name || 'Server');
+  document.getElementById('subtitle').textContent = tab === 'Screenshots'
+    ? 'Evidence linked directly to detection records.'
+    : "A live view of this server's security.";
   document.getElementById('crumb').textContent = tab;
   document.getElementById('avatar').textContent = (data.name || '?')[0].toUpperCase();
   document.getElementById('online-badge').className =
@@ -738,6 +744,7 @@ function render() {
   document.getElementById('count-evidence').textContent = (data.evidence || []).length || '';
   const shotCount = (data.evidence || []).reduce((sum, e) => sum + (e.images || 0), 0);
   document.getElementById('count-shots').textContent = shotCount || '';
+  document.getElementById('stats').style.display = tab === 'Screenshots' ? 'none' : '';
   renderStats();
   document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
     link.classList.toggle('active', link.dataset.tab === tab));

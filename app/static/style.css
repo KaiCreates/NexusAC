@@ -586,6 +586,21 @@ p {
   min-height: 100dvh;
   grid-template-columns: 224px minmax(0, 1fr);
 }
+.dashboard.full.screenshots-route { grid-template-columns: minmax(0, 1fr); background: #121212; }
+.dashboard.full.screenshots-route .dashboard-sidebar { display: none; }
+.dashboard.full.screenshots-route .dashboard-topbar { max-width: 1450px; width: 100%; margin: 0 auto; }
+.dashboard.full.screenshots-route .dashboard-content { width: 100%; max-width: 1450px; margin: 0 auto; padding: 28px 0 60px; }
+.dashboard.full.screenshots-route .server-toolbar { margin-bottom: 28px; }
+.dashboard.full.screenshots-route .dashboard-title { margin-bottom: 24px; }
+.dashboard.full.screenshots-route .dashboard-title .eyebrow { letter-spacing: .14em; }
+.dashboard.full.screenshots-route .shot-main { background: transparent; border: 0; }
+.dashboard.full.screenshots-route .shot-main .panel-heading { display: none; }
+.dashboard.full.screenshots-route .shot-rail { display: none; }
+.dashboard.full.screenshots-route .shot-grid { padding: 0; gap: 18px; }
+.dashboard.full.screenshots-route .shot-tile { background: #1c1c1c; border-color: #333; }
+.dashboard.full.screenshots-route .shot-tile img { height: 242px; }
+.dashboard.full.screenshots-route .shot-meta { background: #1c1c1c; padding: 15px 17px 18px; }
+.dashboard.full.screenshots-route .shot-rail { background: #171717; border-color: #2a2a2a; }
 .dashboard-sidebar {
   background: #09090a;
   border-right: 1px solid #242427;
