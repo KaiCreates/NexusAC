@@ -671,7 +671,7 @@ const COMMAND_STATUS = {
 
 function commandLog() {
   const rows = (data.commands || []).filter(
-    (c) => c.type === 'setting' || c.type === 'detector' || c.type === 'punish');
+    (c) => c.type === 'setting' || c.type === 'entity' || c.type === 'detector' || c.type === 'punish');
   if (!rows.length) return '';
 
   const body = rows.slice(0, 10).map((c) => {

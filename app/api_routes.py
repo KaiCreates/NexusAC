@@ -507,9 +507,9 @@ async def snapshot(request: Request, server_id: str):
                 "actor": c["actor_name"],
                 "type": (c["body"] or {}).get("type"),
                 "path": (c["body"] or {}).get("path") or (c["body"] or {}).get("detector")
-                        or (c["body"] or {}).get("signal"),
+                        or (c["body"] or {}).get("signal") or (c["body"] or {}).get("model"),
                 "value": (c["body"] or {}).get("value") or (c["body"] or {}).get("mode")
-                         or (c["body"] or {}).get("action"),
+                         or (c["body"] or {}).get("action") or (c["body"] or {}).get("policy"),
                 "created": int(c["created"]),
                 "result": c["result"],
                 "ackAt": c["ack_at"],
