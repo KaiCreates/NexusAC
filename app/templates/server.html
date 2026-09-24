@@ -63,7 +63,7 @@
 
       <div class="dashboard-title">
         <div>
-          <span class="eyebrow">COMMAND CENTER</span>
+          <span class="eyebrow" id="eyebrow">COMMAND CENTER</span>
           <h1 id="name">Loading…</h1>
           <p class="muted" id="subtitle">A live view of this server's security.</p>
         </div>
@@ -432,67 +432,84 @@ function viewScreenshots() {
     failed: 'Failed — no image came back',
     none: 'No capture was requested for this case',
   };
-  const pendingRows = pending.map((item) => {
-    const status = (item.screenshot || {}).status || 'none';
-    return '<div class="shot-pending' + (status === 'failed' || status === 'unavailable'
-      ? ' bad' : '') + '">' +
-      '<div><b>' + escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
-      '<small>' + escapeHtml(item.detection || '—') + ' · ' +
-      escapeHtml(ago(item.at, data.serverTime)) + '</small></div>' +
-      '<span class="badge ' + (status === 'requested' ? 'warning'
-        : status === 'none' ? '' : 'danger') + '">' + escapeHtml(status) + '</span>' +
-      '<div class="shot-pending-why">' + escapeHtml(STATUS_TEXT[status] || status) + '</div></div>';
+  // Capture requests used to live in a right-hand rail, which cost the gallery
+  // a third of its width permanently to hold a control used once in a while.
+  // It is a toolbar now, so the grid gets the whole page.
+  const capture = can && data.online && players.length
+    ? '<div class="sc-actions">' +
+      '<select id="sc-target" aria-label="Player to capture">' +
+      players.map((p) => '<option value="' + p.src + '">' +
+        escapeHtml(p.name || '?') + ' · ID ' + p.src + '</option>').join('') +
+      '</select>' +
+      '<button class="button light small" id="sc-request">' +
+      icon('camera', 15) + ' Request capture</button></div>'
+    : '';
+
+  const clock = (at) => {
+    const d = new Date((at || 0) * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  };
+  // Case ids arrive as "boot:id"; only the id half is worth showing on a card.
+  const caseRef = (id) => String(id || '').split(':').pop() || '—';
+
+  const cards = shots.map(({ item, slot }) => {
+    const url = '/api/control/servers/' + SERVER + '/media/' +
+      encodeURIComponent(item.id) + '/' + slot;
+    const detail = escapeHtml(item.detection || 'Detection') +
+      (item.confidence !== undefined ? ' · ' + num(item.confidence) + '% confidence' : '');
+    return '<article class="sc-card" data-shot="' + escapeHtml(item.id) + '" data-slot="' + slot +
+      '" tabindex="0" role="button" aria-label="Open evidence for ' +
+      escapeHtml((item.player || {}).name || 'player') + '">' +
+      '<div class="sc-preview">' +
+      '<img src="' + url + '" alt="Evidence for ' + escapeHtml(item.detection || 'case') +
+      '" loading="lazy">' +
+      '<div class="sc-cap"><span class="sc-cap-icon">' + icon('scan-line', 20) + '</span>' +
+      '<span class="sc-cap-label">EVIDENCE</span>' +
+      '<span class="sc-cap-id">' + escapeHtml(caseRef(item.id)) + ' · ' + clock(item.at) +
+      '</span></div></div>' +
+      '<div class="sc-foot"><div class="sc-foot-top"><b>' +
+      escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
+      '<span class="sc-open" aria-hidden="true">' + icon('arrow-up-right', 15) + '</span></div>' +
+      '<div class="sc-foot-sub">' + detail + '</div></div></article>';
   }).join('');
 
-  const rail =
-    '<aside class="shot-rail"><div class="shot-rail-head">' +
-    '<b>Players online</b><span class="badge">' + players.length + '</span></div>' +
-    (players.length
-      ? players.map((p) =>
-          '<div class="shot-rail-row">' +
-          '<span class="player-cell"><span class="avatar tiny">' +
-          escapeHtml((p.name || '?')[0].toUpperCase()) + '</span>' +
-          '<span><b>' + escapeHtml(p.name || '?') + '</b><small>ID ' + p.src + '</small></span></span>' +
-          (can && data.online
-            ? '<button class="icon-button" title="Request a screenshot" ' +
-              'aria-label="Request a screenshot from ' + escapeHtml(p.name || '') + '" ' +
-              'data-act="screenshot" data-src="' + p.src + '">' + icon('camera', 15) + '</button>'
-            : '') + '</div>').join('')
-      : '<div class="shot-rail-empty">Nobody is connected, so there is nobody to capture.</div>') +
-    '</aside>';
+  // A capture that was asked for and produced nothing still gets a card. It is
+  // the same question -- "what happened to this player" -- and "we tried and
+  // failed" is a different answer from "we never looked".
+  const blanks = pending.map((item) => {
+    const status = (item.screenshot || {}).status || 'none';
+    const bad = status === 'failed' || status === 'unavailable';
+    return '<article class="sc-card blank' + (bad ? ' bad' : '') + '">' +
+      '<div class="sc-preview empty">' +
+      '<div class="sc-cap"><span class="sc-cap-icon">' + icon('scan-line', 20) + '</span>' +
+      '<span class="sc-cap-label">' + escapeHtml(status.toUpperCase()) + '</span>' +
+      '<span class="sc-cap-id">' + escapeHtml(caseRef(item.id)) + ' · ' + clock(item.at) +
+      '</span></div></div>' +
+      '<div class="sc-foot"><div class="sc-foot-top"><b>' +
+      escapeHtml((item.player || {}).name || 'Unknown') + '</b></div>' +
+      '<div class="sc-foot-sub">' + escapeHtml(STATUS_TEXT[status] || status) + '</div>' +
+      '</div></article>';
+  }).join('');
 
-  const gallery = shots.length
-    ? '<div class="shot-grid">' + shots.map(({ item, slot }) => {
-        const url = '/api/control/servers/' + SERVER + '/media/' +
-          encodeURIComponent(item.id) + '/' + slot;
-        return '<button class="shot-tile" data-shot="' + escapeHtml(item.id) + '" data-slot="' +
-          slot + '">' +
-          '<img src="' + url + '" alt="Screenshot for ' + escapeHtml(item.detection || 'case') + '" ' +
-          'loading="lazy">' +
-          '<div class="shot-meta"><b>' + escapeHtml((item.player || {}).name || 'Unknown') + '</b>' +
-          '<small>' + escapeHtml(item.detection || '—') +
-          (item.confidence !== undefined ? ' · ' + num(item.confidence) + '% confidence' : '') +
-          ' · ' + escapeHtml(item.id || '') + ' · ' + escapeHtml(ago(item.at, data.serverTime)) +
-          '</small></div></button>';
-      }).join('') + '</div>'
-    : '<div class="empty-state"><h3>No screenshots yet</h3><p>' +
-      'Press the camera next to a player to request one. It arrives on the next poll or two, ' +
-      'and every attempt is listed below whether or not it produced an image.</p></div>';
+  const total = shots.length + pending.length;
 
-  return offlineNote() + integration +
-    '<div class="shot-layout">' + rail +
-    '<div><section class="panel shot-main"><div class="panel-heading">' +
-    '<h3>Captured screenshots</h3><span class="badge">' + shots.length + '</span></div>' +
-    gallery + '</section>' +
-    (pendingRows
-      ? '<section class="panel shot-main" style="margin-top:14px">' +
-        '<div class="panel-heading"><h3>Attempts without an image</h3>' +
-        '<span class="badge">' + pending.length + '</span></div>' +
-        '<div class="shot-pending-list">' + pendingRows + '</div>' +
-        '<p class="panel-note" style="margin:0;padding:0 17px 15px">A failed capture is recorded ' +
-        'as failed, never as guilt.</p></section>'
+  // No header here: render() already sets the page eyebrow, title and subtitle
+  // for this tab, so repeating them would print the heading twice.
+  return '<section class="sc-page">' +
+    offlineNote() + integration +
+    (total
+      ? '<div class="sc-note">' + icon('image', 16) +
+        '<span>Captured from the player\'s own client and tied to the case that asked ' +
+        'for it. A failed capture is recorded as failed, never as guilt.</span></div>'
       : '') +
-    '</div></div>';
+    capture +
+    (total
+      ? '<div class="sc-grid">' + cards + blanks + '</div>'
+      : '<div class="sc-empty"><h3>No captures yet</h3><p>' +
+        'Pick a player above and request one. It arrives on the next poll or two, and every ' +
+        'attempt shows here whether or not it produced an image.</p></div>') +
+    '</section>';
 }
 
 /* Configuration.
@@ -726,6 +743,8 @@ function renderStats() {
 
 function render() {
   document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
+  document.getElementById('eyebrow').textContent =
+    tab === 'Screenshots' ? 'WORKSPACE / SCREENSHOTS' : 'COMMAND CENTER';
   document.getElementById('name').textContent = tab === 'Screenshots' ? 'Screenshots' : (data.name || 'Server');
   document.getElementById('subtitle').textContent = tab === 'Screenshots'
     ? 'Evidence linked directly to detection records.'
@@ -986,6 +1005,18 @@ document.addEventListener('click', async (event) => {
   if (event.target.closest('#cfg-save')) return saveConfig();
 
   /* ---- screenshots ---- */
+
+  if (event.target.closest('#sc-request')) {
+    const select = document.getElementById('sc-target');
+    const src = Number(select && select.value);
+    if (!src) return note(msg, 'Pick a player to capture first.', 'bad');
+    const player = ((data.snapshot || {}).players || []).find((p) => p.src === src);
+    if (!player) return note(msg, 'That player is no longer connected.', 'bad');
+    await send({ type: 'screenshot', target: src, session: player.sessionKey,
+                 reason: 'Manual capture from the web console' },
+               'Screenshot of ' + player.name);
+    return;
+  }
 
   const tile = event.target.closest('[data-shot]');
   if (tile) {
