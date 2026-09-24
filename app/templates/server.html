@@ -405,7 +405,7 @@ function viewEvidence() {
    guarded on a cache key, because render() runs on every poll and refetching a
    page of events every few seconds while somebody reads it would be both
    wasteful and jumpy. */
-const research = { events: null, eventsKey: '', identities: null, identitiesKey: '' };
+const research = { events: null, eventsKey: '', identities: null, identitiesKey: '', activityTimer: null };
 let activityQuery = '';
 let activityKind = 'all';
 let identityQuery = '';
@@ -413,6 +413,13 @@ let identityQuery = '';
 function mount(fn) { setTimeout(fn, 0); }
 
 function viewActivity() {
+  // Activity is a live research surface. The old cache guard prevented the
+  // page from ever seeing events that arrived after the first render.
+  if (!research.activityTimer) {
+    research.activityTimer = setInterval(() => {
+      if (tab === 'Activity') loadActivity();
+    }, 5000);
+  }
   const key = activityQuery + '|' + activityKind;
   if (research.eventsKey !== key || !research.events) mount(loadActivity);
 
