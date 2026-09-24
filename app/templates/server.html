@@ -559,6 +559,7 @@ const WEBHOOK_CATEGORIES = [
   ['admin', 'Staff actions', 'What your own staff did, kept apart from detections.'],
   ['errors', 'Errors', 'The anti-cheat reporting its own failures.'],
 ];
+const pendingWebhooks = {};
 
 function viewWebhooks() {
   const integrations = (data.snapshot || {}).integrations || {};
@@ -574,8 +575,13 @@ function viewWebhooks() {
     const c = byCategory[key] || {};
     const configured = !!c.configured;
     const inactive = key !== 'main' && !separate;
+    const pendingAt = pendingWebhooks[key] || 0;
+    if (configured || (pendingAt && Date.now() - pendingAt >= 15000)) delete pendingWebhooks[key];
+    const saving = !configured && pendingAt && Date.now() - pendingAt < 15000;
 
-    const state = inactive
+    const state = saving
+      ? '<span class="badge warning">saving…</span>'
+      : inactive
       ? '<span class="badge">routed to Everything</span>'
       : configured === undefined
         ? ''
@@ -1346,6 +1352,14 @@ document.addEventListener('click', async (event) => {
     if (field && ok) {
       field.value = '';
       field.placeholder = 'Saved — paste a new URL to replace it';
+      pendingWebhooks[key] = Date.now();
+      render();
+      // The resource may collect the command on its next heartbeat. Keep the
+      // status alive long enough for that round trip instead of repainting the
+      // old "not set" snapshot immediately after Save.
+      setTimeout(() => load(true), 2500);
+      setTimeout(() => load(true), 7000);
+      setTimeout(() => load(true), 13000);
     }
     return;
   }
