@@ -1326,6 +1326,13 @@ document.addEventListener('click', async (event) => {
     if (!settings[path]) return;
     const next = !(Object.prototype.hasOwnProperty.call(configEdits, path)
       ? configEdits[path] : settings[path].value);
+    // The routing switch lives on the Webhooks view, which intentionally has
+    // no separate configuration Save button. Submit it immediately so clicking
+    // the switch cannot leave a staged value that disappears on the next poll.
+    if (path === 'webhooks.separate') {
+      return void send({ type: 'setting', path, value: next, expected: settings[path].value },
+        next ? 'Separate webhook routing' : 'Combined webhook routing');
+    }
     stageEdit(path, next, settings[path].value);
     return render();
   }
