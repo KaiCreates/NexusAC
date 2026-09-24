@@ -293,6 +293,27 @@ def _store_punishments(cur, server: dict, server_id: str, block: dict) -> int:
     return cursor
 
 
+def _optional(cur, degraded: list[str], label: str, fn, *args) -> int:
+    """Run one mirror inside a savepoint; never let it fail the sync.
+
+    psycopg opens a real SAVEPOINT for a nested transaction block, so an error
+    here rolls back only this mirror. Without that, Postgres marks the whole
+    transaction aborted and every statement after it fails too -- including the
+    command dispatch, which is the part that actually has to work.
+    """
+    try:
+        with cur.connection.transaction():
+            return fn(cur, *args)
+    except Exception as error:  # noqa: BLE001 - deliberately broad, see above
+        degraded.append(label)
+        log.warning(
+            "[NexusAC bridge] %s mirror skipped for server %s: %s: %s. "
+            "Run scripts/migrate.py if this is a missing table or column.",
+            label, args[1] if len(args) > 1 else "?", type(error).__name__, error,
+        )
+        return 0
+
+
 async def _sync(request: Request, server: dict, server_id: str):
     body = await json_body(request, MAX_SNAPSHOT_BYTES)
     payload = SyncRequest(**body)
@@ -349,9 +370,22 @@ async def _sync(request: Request, server: dict, server_id: str):
                 (server_id, item["id"], db.jsonb(item), now()),
             )
 
-        identity_cursor = _store_identities(cur, server, server_id, identities)
-        event_cursor = _store_events(cur, server, server_id, event_log, payload.sequence)
-        punish_cursor = _store_punishments(cur, server, server_id, punishments)
+        # The three mirrors are enrichment, not liveness. Each runs inside its
+        # own savepoint so a failure -- most often a table that exists only
+        # after a migration nobody has run yet -- rolls back that block alone.
+        #
+        # Before this, a missing nx_events aborted the whole transaction, which
+        # meant acknowledgements were lost and NO COMMAND WAS EVER DISPATCHED.
+        # Every config change queued from the website then sat until it expired
+        # with "the server never collected it", and the cause was three tables
+        # away from the symptom.
+        degraded: list[str] = []
+        identity_cursor = _optional(cur, degraded, "identities",
+                                    _store_identities, server, server_id, identities)
+        event_cursor = _optional(cur, degraded, "events",
+                                 _store_events, server, server_id, event_log, payload.sequence)
+        punish_cursor = _optional(cur, degraded, "punishments",
+                                  _store_punishments, server, server_id, punishments)
 
         for ack in payload.acknowledgements:
             status = "uncertain" if ack.uncertain else ("succeeded" if ack.ok else "failed")
@@ -392,6 +426,9 @@ async def _sync(request: Request, server: dict, server_id: str):
             "identityCursor": identity_cursor,
             "eventCursor": event_cursor,
             "punishCursor": punish_cursor,
+            # Named so the resource can print which mirror is not storing, rather
+            # than the operator discovering it from an empty page weeks later.
+            "degraded": degraded,
             "commands": [
                 {
                     "id": str(item["id"]),
