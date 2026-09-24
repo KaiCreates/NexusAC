@@ -253,6 +253,14 @@ class SettingCommand(BaseModel):
     expected: Union[bool, float, Annotated[str, Field(max_length=300)]]
 
 
+class EntityCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["entity"]
+    model: Annotated[str, Field(min_length=1, max_length=80)]
+    policy: Literal["allow", "block", "ban"]
+    risk: Annotated[int, Field(ge=0, le=200)] = 0
+
+
 class DetectorCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["detector"]
@@ -278,7 +286,7 @@ class PunishCommand(BaseModel):
 Command = Annotated[
     Union[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
-        UnbanCommand, SettingCommand, DetectorCommand, PunishCommand,
+        UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
     ],
     Field(discriminator="type"),
 ]

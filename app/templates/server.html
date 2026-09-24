@@ -506,6 +506,7 @@ const CONFIG_TABS = {
   Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
               'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
               'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing'],
+  Entity: ['vehicles', 'entitybehaviour'],
   Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
                 'honeypot', 'trust', 'txadmin'],
 };
@@ -561,6 +562,26 @@ function settingControl(path, setting, editable) {
     (setting.lo !== undefined ? ' min="' + setting.lo + '"' : '') +
     (setting.hi !== undefined ? ' max="' + setting.hi + '"' : '') +
     ' value="' + escapeHtml(String(value)) + '" class="cfg-input' + (numeric ? ' cfg-num' : '') + '">';
+}
+
+function entityRulesCard(editable) {
+  const entities = ((data.snapshot || {}).config || {}).entities || [];
+  const rows = entities.length ? entities.map((rule) =>
+    '<div class="cfg-row entity-rule"><div class="cfg-label"><b>' +
+    escapeHtml(rule.name || rule.hash) + '</b><small>' + escapeHtml(rule.hash) +
+    ' · ' + escapeHtml(rule.policy || 'default') + '</small></div><div class="cfg-control">' +
+    (editable ? '<select data-entity-policy="' + escapeHtml(rule.hash) + '">' +
+      ['allow', 'block', 'ban'].map((p) => '<option value="' + p + '"' +
+        (p === rule.policy ? ' selected' : '') + '>' + p + '</option>').join('') +
+      '</select>' : '<span class="cfg-readonly">' + escapeHtml(rule.policy || 'default') + '</span>') +
+    '</div></div>').join('')
+    : '<div class="cfg-empty">No model rules yet. Add a model below to whitelist or blacklist it.</div>';
+  return '<section class="panel cfg-card entity-rules-card"><div class="cfg-card-head">' +
+    '<span class="protection-icon">' + icon('braces', 17) + '</span><div><b>Whitelisted / blacklisted models</b>' +
+    '<small>' + entities.length + ' model rule' + (entities.length === 1 ? '' : 's') + '</small></div></div>' +
+    rows + (editable ? '<div class="entity-rule-add"><input id="entity-model" class="cfg-input" placeholder="Model name or hash" maxlength="80">' +
+    '<select id="entity-policy" class="cfg-input"><option value="allow">Whitelist</option><option value="block">Blacklist</option><option value="ban">Ban</option></select>' +
+    '<button class="button small light" id="entity-add">Add model</button></div>' : '') + '</section>';
 }
 
 function viewConfig() {
@@ -627,6 +648,7 @@ function viewConfig() {
   }).join('');
 
   return offlineNote() + header + '<div class="cfg-grid">' + cards + '</div>' +
+    entityRulesCard(editable) +
     commandLog() +
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
 }
@@ -946,6 +968,14 @@ document.addEventListener('click', async (event) => {
     return render();
   }
 
+  if (event.target.closest('#entity-add')) {
+    const model = (document.getElementById('entity-model') || {}).value || '';
+    const policy = (document.getElementById('entity-policy') || {}).value || 'allow';
+    if (!model.trim()) return note(msg, 'Enter a model name or hash first.', 'bad');
+    await send({ type: 'entity', model: model.trim(), policy, risk: 0 }, model.trim());
+    return;
+  }
+
   if (event.target.closest('#cfg-save')) return saveConfig();
 
   /* ---- screenshots ---- */
@@ -1050,6 +1080,11 @@ document.addEventListener('change', async (event) => {
   }
 
   const path = target.dataset.cfg;
+  const entityHash = target.dataset.entityPolicy;
+  if (entityHash) {
+    return void send({ type: 'entity', model: entityHash, policy: target.value, risk: 0 },
+      entityHash + ' → ' + target.value);
+  }
   if (path && target.dataset.kind !== 'boolean') {
     const settings = ((data.snapshot || {}).config || {}).settings || {};
     const current = settings[path];

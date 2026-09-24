@@ -22,8 +22,8 @@ PERMISSIONS: dict[str, tuple[str, ...]] = {
     # "punish" changes what a single detection does on its own, up to an
     # immediate ban. It sits with the other configuration verbs rather than with
     # the moderation ones, because it is a policy change, not an action.
-    "owner": ("warn", "kick", "ban", "freeze", "screenshot", "unban", "setting", "detector", "punish"),
-    "administrator": ("warn", "kick", "ban", "freeze", "screenshot", "unban", "setting", "detector", "punish"),
+    "owner": ("warn", "kick", "ban", "freeze", "screenshot", "unban", "setting", "entity", "detector", "punish"),
+    "administrator": ("warn", "kick", "ban", "freeze", "screenshot", "unban", "setting", "entity", "detector", "punish"),
     # A moderator gets the mild option too -- warning is the one that should be
     # reached for first, so withholding it would just push them to kick.
     "moderator": ("warn", "kick", "freeze", "screenshot"),

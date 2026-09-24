@@ -105,6 +105,10 @@ body {
 .dashboard.full .toggle.on { background: #f4f4f4; border-color: #f4f4f4; }
 .dashboard.full .toggle.on > span { background: #171819; transform: translateX(14px); }
 .dashboard.full .cfg-control select, .dashboard.full .cfg-input { color: #f4f4f4; background: #27292a; border-color: #444748; border-radius: 7px; }
+.dashboard.full .entity-rule-add { display: flex; gap: 8px; align-items: center; padding: 14px 18px; border-top: 1px solid #2c2e30; }
+.dashboard.full .entity-rule-add .cfg-input { min-width: 0; flex: 1; }
+.dashboard.full .entity-rule-add select.cfg-input { flex: 0 0 120px; width: 120px; }
+.dashboard.full .cfg-empty { padding: 16px 18px; color: #85888a; font-size: 12px; }
 @media (max-width: 1100px) { .dashboard.full .cfg-grid { column-count: 2; } }
 @media (max-width: 700px) { .dashboard.full .cfg-grid { column-count: 1; } }
 a {
