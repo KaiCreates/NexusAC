@@ -1132,7 +1132,7 @@ function playerOf(src) {
 async function send(body, label) {
   const result = await api('/servers/' + SERVER + '/commands', body);
   note(msg, result.ok
-    ? label + ' queued. The server picks it up on its next poll, within a few seconds.'
+    ? label + ' updated successfully. Waiting for live confirmation from the server…'
     : result.error, result.ok ? 'good' : 'bad');
   setTimeout(() => load(true), 800);
   return result.ok;
@@ -1444,8 +1444,8 @@ async function saveConfig() {
 
   configEdits = {};
   note(msg, refused.length
-    ? queued + ' change(s) queued, ' + refused.length + ' refused: ' + refused[0]
-    : queued + ' change(s) queued — watch Recent changes below for the outcome.',
+    ? queued + ' update(s) sent, ' + refused.length + ' refused: ' + refused[0]
+    : queued + ' update(s) sent successfully. Waiting for live confirmation from the server…',
     refused.length ? 'bad' : 'good');
   // Two reloads: the first catches the command being collected, the second the
   // result coming back on the sync after that. Without the second, the panel
