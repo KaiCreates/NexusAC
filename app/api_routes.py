@@ -337,6 +337,7 @@ def _int_param(request: Request, name: str, default: int) -> int:
 async def identity_search(request: Request):
     user = authenticated(request)
     rate(f"identities:{user['id']}", 120, 60)
+    db.ensure_schema()
     return reply(
         identity_store.search(
             user["workspace"],
@@ -350,6 +351,7 @@ async def identity_search(request: Request):
 @router.get("/identities/detail")
 async def identity_detail(request: Request):
     user = authenticated(request)
+    db.ensure_schema()
     uid = request.query_params.get("uid", "")
     require(uid, 400, "An identity id is required.")
     return reply(identity_store.detail(user["workspace"], uid))
@@ -358,6 +360,7 @@ async def identity_detail(request: Request):
 @router.get("/identities/aliases")
 async def identity_aliases(request: Request):
     user = authenticated(request)
+    db.ensure_schema()
     uid = request.query_params.get("uid", "")
     require(uid, 400, "An identity id is required.")
     # The traversal is several indexed queries deep, so it gets a tighter budget
@@ -378,6 +381,7 @@ async def identity_aliases(request: Request):
 async def events_search(request: Request):
     user = authenticated(request)
     rate(f"events:{user['id']}", 180, 60)
+    db.ensure_schema()
     q = request.query_params
     return reply(
         event_store.search(
@@ -395,6 +399,7 @@ async def events_search(request: Request):
 @router.get("/events/types")
 async def events_types(request: Request):
     user = authenticated(request)
+    db.ensure_schema()
     return reply({"types": event_store.types(user["workspace"])})
 
 

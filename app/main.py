@@ -77,11 +77,16 @@ async def health():
     from . import db
 
     try:
-        db.query("SELECT 1")
+        db.ensure_schema()
         database = "ok"
+        status = 200
     except Exception as error:  # surfaced deliberately: this endpoint exists to diagnose
-        database = "unreachable: " + type(error).__name__
-    return JSONResponse({"service": "nexusac-web", "database": database})
+        database = "unavailable: " + type(error).__name__
+        status = 503
+    return JSONResponse(
+        {"service": "nexusac-web", "database": database, "schema": "ok" if status == 200 else "error"},
+        status_code=status,
+    )
 
 
 # --------------------------------------------------------------------------- #

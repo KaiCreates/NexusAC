@@ -21,6 +21,17 @@ from . import config
 
 _lock = threading.Lock()
 _conn: psycopg.Connection | None = None
+_schema_lock = threading.Lock()
+_schema_ready = False
+
+# Tables used by feature endpoints rather than the basic login/dashboard path.
+# A bare SELECT 1 cannot prove these migrations landed.
+REQUIRED_TABLES = (
+    "nx_identities",
+    "nx_identity_marks",
+    "nx_events",
+    "nx_punishments",
+)
 
 
 def _connect() -> psycopg.Connection:
@@ -114,3 +125,31 @@ def run_migrations(statements: Iterable[str] | None = None) -> None:
     with connection() as conn, conn.cursor() as cur:
         for path in sorted(folder.glob("*.sql")):
             cur.execute(path.read_text(encoding="utf-8"))
+
+
+def ensure_schema() -> None:
+    """Ensure every deployed migration exists, once per worker process.
+
+    Render runs ``scripts/migrate.py`` before Uvicorn, but serverless targets
+    and interrupted deployments do not necessarily execute that command. The
+    migrations are idempotent, so a guarded replay is safer than letting only
+    Identities and Events fail later with an opaque HTTP 503.
+    """
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        run_migrations()
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name = ANY(%s)",
+                (list(REQUIRED_TABLES),),
+            )
+            present = {row["table_name"] for row in cur.fetchall()}
+        missing = sorted(set(REQUIRED_TABLES) - present)
+        if missing:
+            raise RuntimeError("database migrations incomplete: " + ", ".join(missing))
+        _schema_ready = True
