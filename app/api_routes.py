@@ -526,6 +526,17 @@ async def snapshot(request: Request, server_id: str):
     })
 
 
+@router.get("/servers/{server_id}/activity")
+async def server_activity(request: Request, server_id: str):
+    """Hourly (24h) or 6-hourly (7d) event counts for the Overview chart."""
+    user = authenticated(request)
+    rate(f"activity:{user['id']}", 60, 60)
+    _server_of(user, server_id)
+    db.ensure_schema()
+    return reply(event_store.activity(
+        user["workspace"], server_id, request.query_params.get("window", "24h")))
+
+
 @router.post("/servers/{server_id}/commands")
 async def command(request: Request, server_id: str):
     origin_check(request)

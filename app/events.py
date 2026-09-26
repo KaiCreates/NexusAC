@@ -212,6 +212,62 @@ def search(
     }
 
 
+ACTIVITY_WINDOWS = {"24h": (86400, 3600), "7d": (604800, 21600)}
+
+
+def activity(workspace: str, server: str, window: str = "24h") -> dict:
+    """Bucketed counts for one server's Overview chart, plus window totals.
+
+    `series` is every recorded event per bucket (the chart); `totals` breaks out
+    the four tiles under it. Detections come from the event log, kicks and bans
+    from the punishment record, entities from entityCreated -- which the resource
+    samples (25% by default), so that tile says "recorded", not "created".
+    """
+    span, step = ACTIVITY_WINDOWS.get(window, ACTIVITY_WINDOWS["24h"])
+    from .security import now
+    end = now()
+    start = end - span
+    buckets = span // step
+
+    rows = db.query(
+        """SELECT floor((at - %s) / %s)::int AS b, count(*) AS n
+             FROM nx_events WHERE workspace=%s AND server=%s AND at >= %s
+            GROUP BY b""",
+        (start, step, workspace, server, start),
+    )
+    series = [0] * buckets
+    for r in rows:
+        index = int(r["b"])
+        if 0 <= index < buckets:
+            series[index] = int(r["n"])
+
+    kinds = db.one(
+        """SELECT count(*) FILTER (WHERE type='detection') AS detections,
+                  count(*) FILTER (WHERE type='entityCreated') AS entities
+             FROM nx_events WHERE workspace=%s AND server=%s AND at >= %s""",
+        (workspace, server, start),
+    ) or {}
+    punish = db.one(
+        """SELECT count(*) FILTER (WHERE kind='kick') AS kicks,
+                  count(*) FILTER (WHERE kind='ban') AS bans
+             FROM nx_punishments WHERE workspace=%s AND server=%s AND at >= %s""",
+        (workspace, server, start),
+    ) or {}
+
+    return {
+        "window": window if window in ACTIVITY_WINDOWS else "24h",
+        "start": start,
+        "step": step,
+        "series": series,
+        "totals": {
+            "detections": int(kinds.get("detections") or 0),
+            "entities": int(kinds.get("entities") or 0),
+            "kicks": int(punish.get("kicks") or 0),
+            "bans": int(punish.get("bans") or 0),
+        },
+    }
+
+
 def types(workspace: str) -> list[dict]:
     """Every type seen, with counts, for the filter dropdown.
 

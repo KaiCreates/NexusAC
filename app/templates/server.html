@@ -3,65 +3,51 @@
 {% block chrome %}{% endblock %}
 {% block foot %}{% endblock %}
 {% block body %}
-<div class="dashboard full" id="main">
-  <aside class="dashboard-sidebar" id="sidebar">
-    <div class="sidebar-brand">{{ ui.brand() }}</div>
-    <a class="workspace-picker" href="/dashboard">
-      <span class="workspace-icon">{{ ui.icon('arrow-left', 13) }}</span>
-      <span id="ws-name">All servers<small>back to workspace</small></span>
-    </a>
-    <nav aria-label="Server navigation">
-      <span class="nav-group">WORKSPACE</span>
-      <button class="sidebar-link active" data-tab="Overview">{{ ui.icon('grid') }} Overview</button>
-      <button class="sidebar-link" data-tab="Players">{{ ui.icon('users') }} Players</button>
+{% import "_shell.html" as shell %}
+<div class="dashboard full shell" id="main">
+  <aside class="dashboard-sidebar shell-side" id="sidebar">
+    {{ shell.brand_block() }}
+    <nav class="shell-nav" aria-label="Server navigation">
+      <span class="nav-group">MAIN</span>
+      <button class="sidebar-link active" data-tab="Overview">{{ ui.icon('grid') }} <span>Overview</span></button>
+      <button class="sidebar-link" data-tab="Players">{{ ui.icon('users') }} <span>Players</span>
+        <span class="count" id="count-players"></span></button>
       <span class="nav-group">SECURITY</span>
-      <button class="sidebar-link" data-tab="Detections">{{ ui.icon('scan-line') }} Detections
+      <button class="sidebar-link" data-tab="Detections">{{ ui.icon('scan-line') }} <span>Detections</span>
         <span class="count" id="count-detections"></span></button>
-      <button class="sidebar-link" data-tab="Detectors">{{ ui.icon('radar') }} Detectors</button>
-      <button class="sidebar-link" data-tab="Bans">{{ ui.icon('ban') }} Bans</button>
-      <button class="sidebar-link" data-tab="Evidence">{{ ui.icon('camera') }} Evidence
+      <button class="sidebar-link" data-tab="Detectors">{{ ui.icon('radar') }} <span>Detectors</span></button>
+      <button class="sidebar-link" data-tab="Bans">{{ ui.icon('ban') }} <span>Bans</span>
+        <span class="count" id="count-bans"></span></button>
+      <button class="sidebar-link" data-tab="Evidence">{{ ui.icon('camera') }} <span>Evidence</span>
         <span class="count" id="count-evidence"></span></button>
-      <span class="nav-group">RESEARCH</span>
-      <button class="sidebar-link" data-tab="Activity">{{ ui.icon('activity') }} Activity</button>
-      <button class="sidebar-link" data-tab="Identities">{{ ui.icon('radar') }} Identities</button>
+      <span class="nav-group">ANALYTICS</span>
+      <button class="sidebar-link" data-tab="Activity">{{ ui.icon('activity') }} <span>Activity</span></button>
+      <button class="sidebar-link" data-tab="Identities">{{ ui.icon('radar') }} <span>Identities</span></button>
       <span class="nav-group">MEDIA</span>
-      <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} Screenshots
+      <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} <span>Screenshots</span>
         <span class="count" id="count-shots"></span></button>
       <span class="nav-group">MANAGEMENT</span>
-      <button class="sidebar-link" data-tab="Protection">{{ ui.icon('lock') }} Event Protection</button>
-      <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} Webhooks</button>
-      <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} Integrations</button>
-      <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} Logs</button>
-      <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} Configuration</button>
+      <button class="sidebar-link" data-tab="Protection">{{ ui.icon('lock') }} <span>Event Protection</span></button>
+      <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} <span>Webhooks</span></button>
+      <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} <span>Integrations</span></button>
+      <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} <span>Logs</span></button>
+      <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} <span>Configuration</span></button>
     </nav>
-    <div class="sidebar-bottom">
-      {{ ui.icon('shield-check', 17) }}
-      <div>Server-authoritative<small>the site only asks; the server decides</small></div>
-    </div>
+    <a class="shell-card" href="/dashboard">
+      <span class="shell-card-icon">{{ ui.icon('arrow-left', 15) }}</span>
+      <span class="shell-card-text">All servers<small>Back to workspace</small></span>
+      {{ ui.icon('chevron-right', 14) }}
+    </a>
   </aside>
 
   <div class="dashboard-main">
-    <header class="dashboard-topbar">
-      <div>
-        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
-          {{ ui.icon('menu', 19) }}
-        </button>
-        <span class="breadcrumb">
-          <a href="/dashboard">Workspace</a> {{ ui.icon('chevron-right', 13) }} <b id="crumb">Overview</b>
-        </span>
-      </div>
-      <div class="topbar-right">
-        <span class="simulation-dot" id="livedot"></span>
-        <span class="simulation-label" id="livelabel">Live</span>
-        <button class="icon-button" id="livetoggle" title="Pause live refresh" aria-label="Pause live refresh">
-          {{ ui.icon('rotate', 14) }}
-        </button>
-        <span class="avatar tiny" id="avatar">·</span>
-      </div>
-    </header>
+    {% call shell.topbar(user, [('Workspace', '/dashboard'), ('Overview', None)], 'crumb') %}
+      <span class="shell-live"><span class="simulation-dot" id="livedot"></span><span id="livelabel">Live</span></span>
+      <button class="icon-button" id="livetoggle" title="Pause live refresh" aria-label="Pause live refresh">{{ ui.icon('rotate', 15) }}</button>
+    {% endcall %}
 
     <div class="dashboard-content">
-      <div class="server-toolbar">
+      <div class="server-toolbar" id="toolbar">
         <span class="badge" id="online-badge"><span class="status-dot"></span> …</span>
         <span class="server-region" id="seen">—</span>
         <span class="sync-note" id="rolenote"></span>
@@ -76,7 +62,7 @@
       </div>
 
       <p class="form-message" id="msg" hidden></p>
-      <div class="stats-grid" id="stats" style="margin-bottom:20px"></div>
+      <div class="stats-grid" id="stats" hidden></div>
       <div id="view"></div>
     </div>
   </div>
@@ -129,41 +115,208 @@ function offlineNote() {
 
 /* ----------------------------------------------------------------- views */
 
+/* Overview. Laid out like the reference: hero + status card, four KPI tiles,
+   then server info / activity chart / integrations, then recent detections and
+   recent players. Every figure is read from the live snapshot or the activity
+   endpoint -- nothing on this screen is decorative data. */
+let activity = null;
+let activityWindow = sessionStorage.getItem('nx_activity_window') || '24h';
+let activityAt = 0;
+
+async function loadOverviewActivity(force) {
+  if (!force && Date.now() - activityAt < 60000) return;
+  activityAt = Date.now();
+  const result = await api('/servers/' + SERVER + '/activity?window=' + activityWindow);
+  if (!result.ok) return;
+  activity = result.data;
+  const slot = document.getElementById('ov-activity');
+  if (slot) slot.innerHTML = activityBody();
+}
+
+function kpi(iconName, label, value, note, extra) {
+  return '<article class="ov-kpi"><span class="ov-kpi-icon">' + icon(iconName, 24) + '</span>' +
+    '<div class="ov-kpi-body"><small>' + escapeHtml(label) + '</small><strong>' + escapeHtml(String(value)) +
+    '</strong><em>' + escapeHtml(note) + '</em></div><span class="ov-kpi-glyph">' + icon('signal', 20) + '</span>' +
+    (extra || '') + '</article>';
+}
+
+function meter(fraction, label) {
+  const pct = Math.max(0, Math.min(100, Math.round((fraction || 0) * 100)));
+  return '<div class="ov-meter"><span style="width:' + pct + '%"></span></div>' +
+    '<span class="ov-meter-label">' + escapeHtml(label) + '</span>';
+}
+
+/* Smooth area chart, drawn as inline SVG from the bucketed counts. */
+function areaChart(series, start, step) {
+  const w = 560, h = 150, pad = 4;
+  const max = Math.max(4, ...series);
+  const ceil = Math.ceil(max / 4) * 4;   // four even gridline steps
+  const x = (i) => pad + (i * (w - pad * 2)) / Math.max(1, series.length - 1);
+  const y = (v) => h - pad - (v / ceil) * (h - pad * 2);
+  const pts = series.map((v, i) => [x(i), y(v)]);
+  let d = 'M' + pts[0][0] + ',' + pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    const cx = (x0 + x1) / 2;
+    d += ' C' + cx + ',' + y0 + ' ' + cx + ',' + y1 + ' ' + x1 + ',' + y1;
+  }
+  const area = d + ' L' + pts[pts.length - 1][0] + ',' + h + ' L' + pts[0][0] + ',' + h + ' Z';
+  const grid = [0, 1, 2, 3, 4].map((k) => {
+    const v = (ceil / 4) * k;
+    return '<line x1="0" x2="' + w + '" y1="' + y(v) + '" y2="' + y(v) + '"/>';
+  }).join('');
+  const yLabels = [4, 3, 2, 1, 0].map((k) => '<span>' + Math.round((ceil / 4) * k) + '</span>').join('');
+  const ticks = [];
+  const every = Math.max(1, Math.round(series.length / 6));
+  for (let i = 0; i < series.length; i += every) {
+    const at = new Date((start + i * step) * 1000);
+    ticks.push('<span style="left:' + ((x(i) / w) * 100) + '%">' +
+      (step >= 86400 || series.length <= 28 && step > 3600
+        ? at.toLocaleDateString([], { weekday: 'short' }) + ' ' + String(at.getHours()).padStart(2, '0') + ':00'
+        : String(at.getHours()).padStart(2, '0') + ':00') + '</span>');
+  }
+  return '<div class="ov-chart"><div class="ov-chart-y">' + yLabels + '</div>' +
+    '<div class="ov-chart-plot"><svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+    '<defs><linearGradient id="ovfill" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>' +
+    '</linearGradient></defs><g class="ov-grid">' + grid + '</g>' +
+    '<path d="' + area + '" fill="url(#ovfill)"/><path d="' + d + '" class="ov-line"/></svg>' +
+    '<div class="ov-chart-x">' + ticks.join('') + '</div></div></div>';
+}
+
+function activityBody() {
+  if (!activity) return '<div class="ov-chart-empty muted">Loading activity…</div>';
+  const t = activity.totals || {};
+  const total = (activity.series || []).reduce((a, b) => a + b, 0);
+  const chart = total
+    ? areaChart(activity.series, activity.start, activity.step)
+    : '<div class="ov-chart-empty"><b>No events recorded in this window</b>' +
+      '<span class="muted">The chart fills as the resource mirrors its event log.</span></div>';
+  const tile = (glyph, value, label) => '<div class="ov-mini"><span>' + icon(glyph, 20) + '</span>' +
+    '<div><strong>' + num(value) + '</strong><small>' + label + '</small></div></div>';
+  return chart + '<div class="ov-minis">' + tile('activity', t.detections, 'Detections') +
+    tile('zap', t.kicks, 'Kicks') + tile('ban', t.bans, 'Bans') +
+    tile('box', t.entities, 'Entities') + '</div>';
+}
+
 function viewOverview() {
   const snap = data.snapshot || {};
-  const overview = snap.overview || {};
-  const registry = overview.registry || {};
+  const o = snap.overview || {};
   const integrations = snap.integrations || {};
-  const rows = [
-    ['Mode', overview.mode], ['Version', overview.version],
-    ['Uptime', overview.uptime ? duration(overview.uptime) : '—'],
-    ['Players online', num(overview.online)], ['Carrying risk', num(overview.scored)],
-    ['Above flag threshold', num(overview.watched)], ['Not reporting a client', num(overview.clientless)],
-    ['Entities created', num((overview.entities || {}).created)],
-    ['Entities denied', num((overview.entities || {}).denied)],
-    ['Allowlist entries', num(overview.allowCount)],
-    ['Registry models', num(registry.models)],
-    ['Vehicles / peds / weapons',
-      num(registry.vehicles) + ' / ' + num(registry.peds) + ' / ' + num(registry.weapons)],
-  ].map((pair) => '<tr><td class="muted">' + pair[0] + '</td><td><b>' +
-    escapeHtml(pair[1] === undefined ? '—' : pair[1]) + '</b></td></tr>');
+  const ents = o.entities || {};
+  const slots = Number(o.maxSlots) || 0;
+  const online = Number(o.online) || 0;
+  const status = data.status === 'online' ? 'Online' : data.status === 'degraded' ? 'Degraded' : 'Offline';
+  const statusNote = data.status === 'online' ? 'Running normally'
+    : data.status === 'degraded' ? 'Waiting for the next heartbeat' : 'No report in ' + ago(data.lastSeen, data.serverTime).replace(' ago', '');
 
-  const webhooks = (integrations.webhooks || []).map((channel) =>
-    '<tr class="' + (channel.configured && channel.status === 'failing' ? 'hot' : '') + '">' +
-    '<td>' + escapeHtml(channel.category) + '</td>' +
-    '<td><span class="badge ' + (channel.configured ? 'success' : '') + '">' +
-      (channel.configured ? 'configured' : 'not set') + '</span></td>' +
-    '<td class="muted">' + num(channel.sent) + ' sent · ' + num(channel.failed) + ' failed</td></tr>');
+  const hero =
+    '<section class="ov-hero">' +
+      '<div class="ov-hero-main">' +
+        '<div class="ov-hero-meta"><span class="ov-pill ' + (data.status || 'offline') + '"><span class="status-dot"></span>' +
+          (data.status === 'online' ? 'PROTECTED' : status.toUpperCase()) + '</span>' +
+          '<span>Last seen ' + escapeHtml(ago(data.lastSeen, data.serverTime)) + '</span>' +
+          '<span class="ov-dot">•</span><span class="mono">key ' + escapeHtml(data.hint || '') + '…</span>' +
+          '<span class="ov-dot">•</span><span>your role: ' + escapeHtml(data.role || '') + '</span></div>' +
+        '<span class="eyebrow">COMMAND CENTER</span>' +
+        '<h1>' + escapeHtml(data.name || 'Server') + ' ' + icon('chevron-right', 26) + '</h1>' +
+        '<p>' + escapeHtml(o.hostname ? o.hostname + ' — a' : 'A') + ' live view of this server\'s security, activity, and performance.</p>' +
+      '</div>' +
+      '<div class="ov-hero-art" aria-hidden="true"><img src="/static/brand/nexusac-logo.png" alt="">' +
+        '<div class="ov-tagline"><span>REAL PROTECTION</span><span>REAL PLAYERS</span><span>NO COMPROMISES</span><b>NEXUSAC</b></div></div>' +
+      '<aside class="ov-status">' +
+        '<div class="ov-status-main"><small>SERVER STATUS</small>' +
+          '<b><span class="ov-led ' + (data.status || 'offline') + '"></span>' + status + '</b>' +
+          '<span class="muted">' + escapeHtml(statusNote) + '</span></div>' +
+        '<dl class="ov-status-list">' +
+          '<div><dt>MODE</dt><dd>' + escapeHtml(o.mode || '—') + '</dd></div>' +
+          '<div><dt>PLAYERS</dt><dd>' + num(o.online) + (slots ? ' / ' + num(slots) : '') + '</dd></div>' +
+          '<div><dt>UPTIME</dt><dd>' + (o.uptime ? duration(o.uptime) : '—') + '</dd></div>' +
+          '<div><dt>VERSION</dt><dd>' + escapeHtml(o.version || '—') + '</dd></div>' +
+        '</dl></aside>' +
+    '</section>';
 
-  return offlineNote() +
-    '<div class="overview-middle">' +
-    panel('Server', table(['', ''], rows, 'No snapshot yet', 'Waiting for the first report.')) +
-    panel('Integrations',
-      '<div style="padding:0 17px 6px" class="muted">Screenshots (Nexus-Screens): ' +
-      '<span class="badge ' + (integrations.screenshots === 'started' ? 'success' : 'warning') + '">' +
-      escapeHtml(integrations.screenshots || 'unknown') + '</span></div>' +
-      table(['Channel', 'State', 'Delivery'], webhooks, 'No webhook channels',
-        'Configure Discord channels in the resource to see delivery health here.')) +
+  const kpis = '<div class="ov-kpis">' +
+    kpi('users', 'Players Online', num(o.online), num(o.clientless) + ' not reporting a client',
+      slots ? meter(online / slots, '/ ' + num(slots)) : '') +
+    kpi('shield', 'Carrying Risk', num(o.scored), num(o.watched) + ' above the flag threshold',
+      meter(online ? (Number(o.scored) || 0) / online : 0,
+        (online ? Math.round(((Number(o.scored) || 0) / online) * 100) : 0) + '%')) +
+    kpi('ban', 'Entities Denied', num(ents.denied), num(ents.created) + ' created') +
+    kpi('clock', 'Uptime', o.uptime ? duration(o.uptime) : '—', 'Since the resource started') +
+    '</div>';
+
+  const infoRows = [
+    ['sliders', 'Mode', '<span class="ov-chip">' + escapeHtml(o.mode || '—') + '</span>'],
+    ['tag', 'Version', escapeHtml(o.version || '—')],
+    ['clock', 'Uptime', o.uptime ? duration(o.uptime) : '—'],
+    ['users', 'Players online', num(o.online) + (slots ? ' / ' + num(slots) : '')],
+    ['shield', 'Carrying risk', num(o.scored)],
+    ['flag', 'Above flag threshold', num(o.watched)],
+    ['wifi-off', 'Not reporting a client', num(o.clientless)],
+    ['box', 'Entities created', num(ents.created)],
+    ['ban', 'Entities denied', num(ents.denied)],
+  ].map(([g, k, v]) => '<li><span class="ov-li-icon">' + icon(g, 16) + '</span><span>' + k + '</span><b>' + v + '</b></li>').join('');
+
+  const card = (glyph, title, body, right) => '<section class="ov-card"><header>' +
+    '<h3>' + icon(glyph, 18) + ' ' + escapeHtml(title) + '</h3>' + (right || '') + '</header>' + body + '</section>';
+
+  const shots = integrations.screenshots;
+  const hooks = (integrations.webhooks || []).map((c) => {
+    const failing = c.configured && c.status === 'error';
+    return '<li><span class="ov-li-icon">' + icon('plug', 16) + '</span><span style="display:block">' + escapeHtml(c.category) +
+      '<span class="sub">' + num(c.sent) + ' sent' + (c.failed ? ' · ' + num(c.failed) + ' failed' : '') + '</span></span>' +
+      '<span class="ov-chip ' + (failing ? 'bad' : c.configured ? '' : 'dim') + '">' +
+      (failing ? 'Failing' : c.configured ? 'Configured' : 'Not set') + '</span>' +
+      '<button class="ov-go" data-goto="Webhooks" aria-label="Open webhooks">' + icon('chevron-right', 14) + '</button></li>';
+  }).join('');
+  const integrationList = '<ul class="ov-list">' +
+    '<li><span class="ov-li-icon">' + icon('camera', 16) + '</span><span>Screenshots (Nexus-Screens)</span>' +
+    '<span class="ov-chip ' + (shots === 'started' ? 'ok' : 'bad') + '">' +
+    (shots === 'started' ? '<span class="status-dot"></span> Started' : escapeHtml(shots || 'unknown')) + '</span>' +
+    '<button class="ov-go" data-goto="Integrations" aria-label="Open integrations">' + icon('chevron-right', 14) + '</button></li>' +
+    hooks + '</ul>';
+
+  const windowSelect = '<select class="ov-select" id="ov-window" aria-label="Activity window">' +
+    [['24h', 'Last 24 hours'], ['7d', 'Last 7 days']].map(([v, l]) =>
+      '<option value="' + v + '"' + (v === activityWindow ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>';
+
+  const recentDet = (snap.feed || []).slice(0, 6).map((e) =>
+    '<tr class="' + (e.weight >= 40 ? 'hot' : e.weight > 0 ? 'flag' : '') + '">' +
+    '<td class="muted">' + escapeHtml(ago(e.at, data.serverTime)) + '</td>' +
+    '<td>' + escapeHtml(e.name || '—') + ' <span class="muted">#' + (e.src || 0) + '</span></td>' +
+    '<td><b>' + escapeHtml(e.kind || '') + '</b> ' + (e.weight ? '<span class="ov-chip bad">+' + num(e.weight) + '</span>' : '<span class="ov-chip dim">+0</span>') + '</td>' +
+    '<td class="muted clip" title="' + escapeHtml(e.detail || '') + '">' + escapeHtml(e.detail || '') + '</td></tr>');
+  const detectionsTable = recentDet.length
+    ? '<div class="table-scroll"><table class="ov-table"><thead><tr><th>Time</th><th>Player</th><th>Detection</th><th>Details</th></tr></thead><tbody>' + recentDet.join('') + '</tbody></table></div>'
+    : '<div class="ov-empty">' + icon('search', 22) + '<b>No detections yet</b><span>Detections will appear here in real time.</span></div>';
+
+  const thresholds = o.thresholds || {};
+  const recentPlayers = (snap.players || []).slice(0, 6).map((p) =>
+    '<tr><td><span class="player-cell"><span class="shell-avatar sm">' + escapeHtml((p.name || '?')[0].toUpperCase()) + '</span>' +
+      escapeHtml(p.name || '?') + ' <span class="muted">#' + p.src + '</span>' +
+      (p.live ? ' <span class="ov-chip ok"><span class="status-dot"></span> live</span>' : ' <span class="ov-chip dim">quiet</span>') + '</span></td>' +
+    '<td class="muted">' + num(p.ping) + ' ms</td>' +
+    '<td class="muted">' + (p.sessionAge != null ? duration(p.sessionAge) : '—') + '</td>' +
+    '<td class="muted">' + escapeHtml(p.lifecycle || '—') + '</td>' +
+    '<td><span class="ov-risk ' + riskClass(p.risk, thresholds) + '">' + num(p.risk) + '</span></td>' +
+    '<td><button class="ov-go" data-goto="Players" aria-label="Open players">' + icon('chevron-right', 14) + '</button></td></tr>');
+  const playersTable = recentPlayers.length
+    ? '<div class="table-scroll"><table class="ov-table"><thead><tr><th>Player</th><th>Ping</th><th>Session</th><th>State</th><th>Risk</th><th></th></tr></thead><tbody>' + recentPlayers.join('') + '</tbody></table></div>'
+    : '<div class="ov-empty">' + icon('users', 22) + '<b>Nobody connected</b><span>Players appear here as soon as they join.</span></div>';
+
+  const viewAll = (tabName) => '<button class="ov-link" data-goto="' + tabName + '">View all ' + icon('arrow-right', 14) + '</button>';
+
+  mount(() => loadOverviewActivity(false));
+  return offlineNote() + hero + kpis +
+    '<div class="ov-row three">' +
+      card('server', 'Server Information', '<ul class="ov-list info">' + infoRows + '</ul>') +
+      card('bar-chart', 'Activity Overview', '<div id="ov-activity">' + activityBody() + '</div>', windowSelect) +
+      card('grid', 'Integrations', integrationList, '<button class="ov-link" data-goto="Integrations">Manage ' + icon('arrow-right', 14) + '</button>') +
+    '</div>' +
+    '<div class="ov-row two">' +
+      card('shield', 'Recent Detections', detectionsTable, viewAll('Detections')) +
+      card('users', 'Recent Players', playersTable, viewAll('Players')) +
     '</div>';
 }
 
@@ -656,7 +809,8 @@ function viewIntegrations() {
     '</span></td></tr>');
 
   const hooks = (integrations.webhooks || []).map((c) =>
-    '<tr class="' + (c.configured && c.status === 'failing' ? 'hot' : '') + '">' +
+    // The resource reports a failing channel as status 'error' (sv_log.lua).
+    '<tr class="' + (c.configured && c.status === 'error' ? 'hot' : '') + '">' +
     '<td>' + escapeHtml(c.category) + '</td>' +
     '<td><span class="badge ' + (c.configured ? 'success' : '') + '">' +
       (c.configured ? 'configured' : 'not set') + '</span></td>' +
@@ -1081,15 +1235,19 @@ function renderStats() {
    thing thirteen times and pushed the actual content of each tab below the
    fold. Overview keeps them because that IS the introduction; Screenshots keeps
    the title block alone because its heading is part of that page's design. */
-const HEADER_TABS = ['Overview', 'Screenshots'];
-const STATS_TABS = ['Overview'];
+// Overview now draws its own hero, status card and KPI tiles inside the view,
+// so the generic title block and toolbar are only for Screenshots / other tabs.
+const HEADER_TABS = ['Screenshots'];
+const STATS_TABS = [];
 
 function render() {
   const wantsHeader = HEADER_TABS.includes(tab);
   const wantsStats = STATS_TABS.includes(tab);
 
   document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
+  document.getElementById('main').classList.toggle('overview-route', tab === 'Overview');
   document.querySelector('.dashboard-title').hidden = !wantsHeader;
+  document.getElementById('toolbar').hidden = tab === 'Overview';
   document.getElementById('stats').hidden = !wantsStats;
 
   document.getElementById('eyebrow').textContent =
@@ -1098,8 +1256,8 @@ function render() {
   document.getElementById('subtitle').textContent = tab === 'Screenshots'
     ? 'Evidence linked directly to detection records.'
     : "A live view of this server's security.";
-  document.getElementById('crumb').textContent = tab;
-  document.getElementById('avatar').textContent = (data.name || '?')[0].toUpperCase();
+  document.getElementById('crumb').textContent =
+    ({ Protection: 'Event Protection' })[tab] || tab;
   document.getElementById('online-badge').className =
     'badge ' + (data.status === 'online' ? 'success' : data.status === 'degraded' ? 'warning' : 'danger');
   document.getElementById('online-badge').innerHTML =
@@ -1112,6 +1270,8 @@ function render() {
   document.getElementById('count-evidence').textContent = (data.evidence || []).length || '';
   const shotCount = (data.evidence || []).reduce((sum, e) => sum + (e.images || 0), 0);
   document.getElementById('count-shots').textContent = shotCount || '';
+  document.getElementById('count-players').textContent = ((data.snapshot || {}).players || []).length || '';
+  document.getElementById('count-bans').textContent = ((data.snapshot || {}).bans || []).length || '';
   // Building eight tiles nobody is going to see is wasted work on every poll.
   if (wantsStats) renderStats();
   document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
@@ -1180,6 +1340,14 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  // "View all" / "Manage" / row chevrons on the Overview jump to a tab.
+  const goto = event.target.closest('[data-goto]');
+  if (goto) {
+    tab = goto.dataset.goto;
+    sessionStorage.setItem('nx_tab_' + SERVER, tab);
+    window.scrollTo(0, 0);
+    return render();
+  }
   const link = event.target.closest('.sidebar-link[data-tab]');
   if (link) {
     tab = link.dataset.tab;
@@ -1187,9 +1355,7 @@ document.addEventListener('click', async (event) => {
     document.getElementById('sidebar').classList.remove('mobile-open');
     return render();
   }
-  if (event.target.closest('#menu')) {
-    return document.getElementById('sidebar').classList.toggle('mobile-open');
-  }
+  // #menu is handled once for every shell page in app.js.
   if (event.target.closest('#livetoggle')) {
     live = !live;
     document.getElementById('livelabel').textContent = live ? 'Live' : 'Paused';
@@ -1476,6 +1642,12 @@ async function saveConfig() {
 }
 
 document.addEventListener('change', async (event) => {
+  if (event.target.id === 'ov-window') {
+    activityWindow = event.target.value === '7d' ? '7d' : '24h';
+    sessionStorage.setItem('nx_activity_window', activityWindow);
+    event.target.blur();
+    return loadOverviewActivity(true);
+  }
   const target = event.target;
 
   if (target.id === 'ban-sort') {

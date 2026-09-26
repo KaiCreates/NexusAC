@@ -3,60 +3,21 @@
 {% block chrome %}{% endblock %}
 {% block foot %}{% endblock %}
 {% block body %}
-<div class="dashboard full" id="main">
-  <aside class="dashboard-sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      {{ ui.brand() }}
-    </div>
-    <button class="workspace-picker" id="workspace-picker">
-      <span class="workspace-icon" id="ws-initial">·</span>
-      <span id="ws-name">Loading…<small id="ws-role">workspace</small></span>
-      {{ ui.icon('chevron-down', 13) }}
-    </button>
-    <nav aria-label="Dashboard navigation">
-      <span class="nav-group">OVERVIEW</span>
-      <button class="sidebar-link active" data-view="servers">{{ ui.icon('server') }} Servers</button>
-      <button class="sidebar-link" data-view="commands">{{ ui.icon('sliders') }} Commands</button>
-      <span class="nav-group">SECURITY</span>
-      <a class="sidebar-link" href="/events">{{ ui.icon('log') }} Events</a>
-      <a class="sidebar-link" href="/events">{{ ui.icon('activity') }} Detection logs</a>
-      <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
-      <a class="sidebar-link" href="/identities">{{ ui.icon('radar') }} Identities</a>
-      <a class="sidebar-link" href="/events">{{ ui.icon('camera') }} Evidence</a>
-      <span class="nav-group">MANAGEMENT</span>
-      <button class="sidebar-link" data-view="staff">{{ ui.icon('users') }} Staff</button>
-      <button class="sidebar-link" data-view="audit">{{ ui.icon('log') }} Audit log</button>
-      <a class="sidebar-link" href="/docs">{{ ui.icon('settings') }} Configuration</a>
-      <span class="nav-group">SYSTEM</span>
-      <a class="sidebar-link" href="/docs">{{ ui.icon('activity') }} Webhooks &amp; API</a>
-      <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
-      <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
-    </nav>
-    <div class="sidebar-bottom">
-      {{ ui.icon('shield-check', 17) }}
-      <div>Built for your community<small>NexusAC · web console</small></div>
-    </div>
+{% import "_shell.html" as shell %}
+<div class="dashboard full shell home-route" id="main">
+  <aside class="dashboard-sidebar shell-side" id="sidebar">
+    {{ shell.brand_block() }}
+    {{ shell.workspace_nav('servers', inline_views=True) }}
+    {{ shell.workspace_card() }}
   </aside>
 
   <div class="dashboard-main">
-    <header class="dashboard-topbar">
-      <div>
-        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
-          {{ ui.icon('menu', 19) }}
-        </button>
-        <span class="breadcrumb">Workspace {{ ui.icon('chevron-right', 13) }} <b id="crumb">Servers</b></span>
-      </div>
-      <div class="topbar-right">
-        <span class="simulation-dot"></span>
-        <span class="simulation-label" id="whoami">—</span>
-        <span class="avatar tiny" id="avatar">·</span>
-      </div>
-    </header>
+    {{ shell.topbar(user, [('Workspace', '/dashboard'), ('Servers', None)], 'crumb') }}
 
     <div class="dashboard-content">
       <div class="dashboard-title">
         <div>
-          <span class="eyebrow">NEXUSAC CONTROL CENTER</span>
+          <span class="eyebrow">WORKSPACE</span>
           <h1 id="view-title">Dashboard</h1>
           <p id="view-sub" class="muted">A clear view of your protected servers and workspace activity.</p>
         </div>
@@ -477,14 +438,12 @@ async function load() {
   state = result.data;
   const initial = (state.user.name || '?')[0].toUpperCase();
   document.getElementById('ws-initial').textContent = initial;
-  document.getElementById('avatar').textContent = initial;
   const spaces = (state.workspaces || []).length;
   const current = (state.workspaces || []).find((w) => w.id === state.user.workspace);
   document.getElementById('ws-name').innerHTML =
     escapeHtml((current && current.name) || state.user.name) +
     '<small>' + escapeHtml(state.user.role) +
     (spaces > 1 ? ' · ' + spaces + ' workspaces' : '') + '</small>';
-  document.getElementById('whoami').textContent = state.user.email;
   render();
 }
 
@@ -495,8 +454,6 @@ document.addEventListener('click', async (event) => {
     sessionStorage.setItem('nx_ws_view', view);
     return render();
   }
-  const menu = event.target.closest('#menu');
-  if (menu) return document.getElementById('sidebar').classList.toggle('mobile-open');
 
   if (event.target.closest('#workspace-picker')) return workspaceDialog();
 

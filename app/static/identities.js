@@ -59,8 +59,6 @@ async function loadWorkspace() {
   el('ws-name').firstChild.textContent = name;
   el('ws-initial').textContent = name.charAt(0).toUpperCase();
   el('ws-role').textContent = me.role || 'workspace';
-  el('whoami').textContent = me.name || me.email || '—';
-  el('avatar').textContent = (me.name || me.email || '·').charAt(0).toUpperCase();
 }
 
 /* --------------------------------------------------------------------- *

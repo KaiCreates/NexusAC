@@ -1,0 +1,98 @@
+{# The app shell every signed-in page shares: brand block, top bar and the
+   workspace navigation. One copy, so the pages cannot drift apart again (the
+   sidebar used to be pasted into five templates). #}
+{% import "_icons.html" as ui %}
+
+{% macro brand_block() -%}
+<a href="/dashboard" class="shell-brand" aria-label="NexusAC workspace">
+  <img src="/static/brand/nexusac-logo.png" alt="" class="shell-brand-mark">
+  <span class="shell-brand-text"><b>NEXUS<span>AC</span></b><small>ANTI-CHEAT</small></span>
+</a>
+{%- endmacro %}
+
+{# crumbs: list of (label, href-or-None). The last one is the current page and
+   may carry an id so a script can rename it (server tabs do). #}
+{% macro topbar(user, crumbs, crumb_id=None) -%}
+<header class="shell-top">
+  <div class="shell-top-left">
+    <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">{{ ui.icon('menu', 19) }}</button>
+    <nav class="shell-crumbs" aria-label="Breadcrumb">
+      {% for label, href in crumbs %}
+        {% if not loop.last %}
+          {% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}<span>{{ label }}</span>{% endif %}
+          {{ ui.icon('chevron-right', 13) }}
+        {% else %}
+          <b{% if crumb_id %} id="{{ crumb_id }}"{% endif %}>{{ label }}</b>
+        {% endif %}
+      {% endfor %}
+    </nav>
+  </div>
+  <form class="shell-search" action="/identities" method="get" role="search">
+    {{ ui.icon('search', 16) }}
+    <input name="q" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Search players, identifiers, detections…" aria-label="Search identities">
+  </form>
+  <div class="shell-top-right">
+    {{ caller() if caller is defined else '' }}
+    <a class="icon-button" href="/events" title="Detection logs" aria-label="Detection logs">{{ ui.icon('bell', 17) }}</a>
+    {% if user %}
+    <div class="shell-user">
+      <span class="shell-avatar">{{ (user.name or '?')[0] | upper }}</span>
+      <span class="shell-user-text"><b>{{ user.name }}</b><small>{{ (user.role or '') | capitalize }}</small></span>
+      <button class="icon-button" id="signout" title="Sign out" aria-label="Sign out">{{ ui.icon('logout', 15) }}</button>
+    </div>
+    {% endif %}
+  </div>
+</header>
+{%- endmacro %}
+
+{# The workspace-level navigation (dashboard, events, identities, punishments).
+   `active` is the key of the current entry. Dashboard sub-views are buttons so
+   dashboard.html can switch them without a reload; elsewhere they are links. #}
+{% macro workspace_nav(active, inline_views=False) -%}
+{% set views = [('servers', 'server', 'Servers'), ('commands', 'sliders', 'Commands')] %}
+<nav class="shell-nav" aria-label="Workspace navigation">
+  <span class="nav-group">MAIN</span>
+  {% for key, glyph, label in views %}
+    {% if inline_views %}
+      <button class="sidebar-link{% if active == key %} active{% endif %}" data-view="{{ key }}">{{ ui.icon(glyph) }} <span>{{ label }}</span></button>
+    {% else %}
+      <a class="sidebar-link{% if active == key %} active{% endif %}" href="/dashboard{% if key != 'servers' %}?view={{ key }}{% endif %}">{{ ui.icon(glyph) }} <span>{{ label }}</span></a>
+    {% endif %}
+  {% endfor %}
+  <span class="nav-group">SECURITY</span>
+  <a class="sidebar-link{% if active == 'events' %} active{% endif %}" href="/events">{{ ui.icon('activity') }} <span>Detection logs</span></a>
+  <a class="sidebar-link{% if active == 'punishments' %} active{% endif %}" href="/punishments">{{ ui.icon('ban') }} <span>Punishments</span></a>
+  <span class="nav-group">ANALYTICS</span>
+  <a class="sidebar-link{% if active == 'identities' %} active{% endif %}" href="/identities">{{ ui.icon('radar') }} <span>Identities</span></a>
+  <span class="nav-group">MANAGEMENT</span>
+  {% for key, glyph, label in [('staff', 'users', 'Staff'), ('audit', 'log', 'Audit log')] %}
+    {% if inline_views %}
+      <button class="sidebar-link{% if active == key %} active{% endif %}" data-view="{{ key }}">{{ ui.icon(glyph) }} <span>{{ label }}</span></button>
+    {% else %}
+      <a class="sidebar-link{% if active == key %} active{% endif %}" href="/dashboard?view={{ key }}">{{ ui.icon(glyph) }} <span>{{ label }}</span></a>
+    {% endif %}
+  {% endfor %}
+  <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} <span>Connect a server</span></a>
+</nav>
+{%- endmacro %}
+
+{# Bottom card: the current workspace. On the dashboard it opens the switcher
+   (dashboard.html binds #workspace-picker); elsewhere it links to the dashboard,
+   where switching lives. The ws-* ids are filled from /workspace by each page. #}
+{% macro workspace_card(href=None) -%}
+{% if href %}<a class="shell-card" href="{{ href }}">{% else %}<button class="shell-card" id="workspace-picker" type="button">{% endif %}
+  <span class="shell-card-icon" id="ws-initial">·</span>
+  <span class="shell-card-text" id="ws-name">Loading…<small id="ws-role">workspace</small></span>
+  {{ ui.icon('chevron-right', 14) }}
+{% if href %}</a>{% else %}</button>{% endif %}
+{%- endmacro %}
+
+{# Full shell for the plain workspace pages (events, identities, punishments). #}
+{% macro workspace_side(active) -%}
+<aside class="dashboard-sidebar shell-side" id="sidebar">
+  {{ brand_block() }}
+  {{ workspace_nav(active) }}
+  {{ workspace_card('/dashboard') }}
+</aside>
+{%- endmacro %}

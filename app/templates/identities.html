@@ -3,53 +3,11 @@
 {% block chrome %}{% endblock %}
 {% block foot %}{% endblock %}
 {% block body %}
-<div class="dashboard full" id="main">
-  <aside class="dashboard-sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      {{ ui.brand() }}
-    </div>
-    <button class="workspace-picker" id="workspace-picker">
-      <span class="workspace-icon" id="ws-initial">·</span>
-      <span id="ws-name">Loading…<small id="ws-role">workspace</small></span>
-      {{ ui.icon('chevron-down', 13) }}
-    </button>
-    <nav aria-label="Dashboard navigation">
-      <span class="nav-group">OVERVIEW</span>
-      <a class="sidebar-link" href="/dashboard">{{ ui.icon('server') }} Servers</a>
-      <a class="sidebar-link" href="/dashboard?view=commands">{{ ui.icon('sliders') }} Commands</a>
-      <span class="nav-group">SECURITY</span>
-      <a class="sidebar-link" href="/events">{{ ui.icon('log') }} Events</a>
-      <a class="sidebar-link" href="/events">{{ ui.icon('activity') }} Detection logs</a>
-      <a class="sidebar-link" href="/punishments">{{ ui.icon('ban') }} Punishments</a>
-      <a class="sidebar-link active" href="/identities">{{ ui.icon('radar') }} Identities</a>
-      <a class="sidebar-link" href="/events">{{ ui.icon('camera') }} Evidence</a>
-      <span class="nav-group">MANAGEMENT</span>
-      <a class="sidebar-link" href="/dashboard?view=staff">{{ ui.icon('users') }} Staff</a>
-      <a class="sidebar-link" href="/dashboard?view=audit">{{ ui.icon('log') }} Audit log</a>
-      <a class="sidebar-link" href="/docs">{{ ui.icon('settings') }} Configuration</a>
-      <span class="nav-group">HELP</span>
-      <a class="sidebar-link" href="/docs">{{ ui.icon('file-text') }} Connect a server</a>
-      <button class="sidebar-link" id="signout">{{ ui.icon('logout') }} Sign out</button>
-    </nav>
-    <div class="sidebar-bottom">
-      {{ ui.icon('shield-check', 17) }}
-      <div>Built for your community<small>NexusAC · web console</small></div>
-    </div>
-  </aside>
-
+{% import "_shell.html" as shell %}
+<div class="dashboard full shell" id="main">
+  {{ shell.workspace_side('identities') }}
   <div class="dashboard-main">
-    <header class="dashboard-topbar">
-      <div>
-        <button class="icon-button mobile-menu" id="menu" aria-label="Toggle navigation">
-          {{ ui.icon('menu', 19) }}
-        </button>
-        <span class="breadcrumb">Workspace {{ ui.icon('chevron-right', 13) }} <b>Identities</b></span>
-      </div>
-      <div class="topbar-right">
-        <span class="simulation-label" id="whoami">—</span>
-        <span class="avatar tiny" id="avatar">·</span>
-      </div>
-    </header>
+    {{ shell.topbar(user, [('Workspace', '/dashboard'), ('Identities', None)]) }}
 
     <div class="dashboard-content">
       <div class="dashboard-title">
