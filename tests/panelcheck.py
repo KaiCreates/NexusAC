@@ -35,6 +35,10 @@ SETTINGS = {
     "risk.decayPerMinute": {"value": 3, "kind": "number", "live": True, "lo": 0, "hi": 200},
     "cursor.enabled": {"value": True, "kind": "boolean", "live": False},
     "godmode.enabled": {"value": True, "kind": "boolean", "live": True},
+    "rpfblock.signature.five_x_zoom": {
+        "value": True, "kind": "boolean", "live": True,
+        "label": "5X weapon zoom", "note": "weapons.meta",
+    },
     "combat.enabled": {"value": True, "kind": "boolean", "live": True},
     "ipbans.enabled": {"value": True, "kind": "boolean", "live": True},
     "ipbans.expireDays": {"value": 30, "kind": "number", "live": True, "lo": 0, "hi": 3650},
@@ -99,6 +103,10 @@ with sync_playwright() as p:
     check("card headers are titled", "Risk" in page.inner_text(".cfg-grid"))
     check("search box present", page.locator("#cfg-search").count() == 1)
     check("tabs present", page.locator("[data-cfgtab]").count() >= 4)
+    check("RPF switch uses its operator label",
+          page.locator("[data-cfg='rpfblock.signature.five_x_zoom']").count() == 1
+          and "5X weapon zoom" in page.inner_text(".cfg-grid"))
+    check("RPF switch shows the affected file", "weapons.meta" in page.inner_text(".cfg-grid"))
     check("Save starts disabled", page.locator("#cfg-save").is_disabled())
     page.screenshot(path=OUT + "/cfg-grouped.png", full_page=False)
 

@@ -968,6 +968,7 @@ function viewConfig() {
       const setting = settings[path];
       const staged = Object.prototype.hasOwnProperty.call(configEdits, path);
       const rest = path.slice(group.length + 1) || path;
+      const label = setting.label || prettyLabel(rest);
       const range = (setting.lo !== undefined && setting.hi !== undefined)
         ? setting.lo + '–' + setting.hi : '';
       // A long free-text value -- a model list can run to thousands of
@@ -975,8 +976,9 @@ function viewConfig() {
       // with the field on its own line at full width.
       const long = typeof setting.value === 'string' && (setting.maxLen || 0) > 300;
       return '<div class="cfg-row' + (staged ? ' staged' : '') + (long ? ' wide' : '') + '">' +
-        '<div class="cfg-label"><b>' + escapeHtml(prettyLabel(rest)) + '</b><small>' +
-        escapeHtml(path) + (range ? ' · ' + escapeHtml(range) : '') +
+        '<div class="cfg-label"><b>' + escapeHtml(label) + '</b><small>' +
+        escapeHtml(setting.note || path) + (setting.note ? ' · ' + escapeHtml(path) : '') +
+        (range ? ' · ' + escapeHtml(range) : '') +
         (setting.live ? '' : ' · needs restart') + '</small></div>' +
         '<div class="cfg-control">' + settingControl(path, setting, editable) + '</div></div>';
     }).join('');
