@@ -320,43 +320,177 @@ function viewOverview() {
     '</div>';
 }
 
+/* Players. Header + four live tiles, a filter bar, the roster, and a detail
+   panel that exists only while a player is selected (click a row). Everything
+   is the live snapshot; filters and the selection survive the 1s repaint. */
+const pl = { q: '', status: 'all', risk: 'all', life: 'all', sort: 'id-asc', sel: null, tab: 'overview' };
+
+function playerRows() {
+  const snap = data.snapshot || {};
+  const t = (snap.overview || {}).thresholds || {};
+  const q = pl.q.trim().toLowerCase();
+  let rows = (snap.players || []).filter((p) => {
+    if (q && !(String(p.name || '').toLowerCase().includes(q) || String(p.src) === q ||
+               String(p.ped || '').toLowerCase().includes(q))) return false;
+    if (pl.status === 'live' && !p.live) return false;
+    if (pl.status === 'quiet' && p.live) return false;
+    if (pl.status === 'frozen' && !p.frozen) return false;
+    if (pl.risk === 'clean' && p.risk > 0) return false;
+    if (pl.risk === 'risk' && !(p.risk > 0)) return false;
+    if (pl.risk === 'flag' && p.risk < (t.flag || 40)) return false;
+    if (pl.risk === 'kick' && p.risk < (t.kick || 110)) return false;
+    if (pl.life !== 'all' && (p.lifecycle || '') !== pl.life) return false;
+    return true;
+  });
+  const by = {
+    'id-asc': (a, b) => a.src - b.src, 'id-desc': (a, b) => b.src - a.src,
+    'risk-desc': (a, b) => (b.risk || 0) - (a.risk || 0), 'ping-asc': (a, b) => (a.ping || 0) - (b.ping || 0),
+    'name-asc': (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
+  };
+  return rows.sort(by[pl.sort] || by['id-asc']);
+}
+
+function hpBar(p) {
+  const hp = Math.max(0, Math.min(100, Math.round(((Number(p.health) || 0) - 100) / 100 * 100)));
+  return '<div class="pl-hp"><span>' + num(p.health) + ' / ' + num(p.armour) + '</span>' +
+    '<div class="pl-hpbar"><i style="width:' + hp + '%"></i></div><em>' + hp + '%</em></div>';
+}
+function pingClass(ping) { return ping == null ? '' : ping < 80 ? 'good' : ping < 150 ? 'mid' : 'bad'; }
+
+function playerPanel(p) {
+  const snap = data.snapshot || {};
+  const t = (snap.overview || {}).thresholds || {};
+  const can = ['owner', 'administrator', 'moderator'].includes(data.role) && data.online;
+  const admin = ['owner', 'administrator'].includes(data.role);
+  const tabs = [['overview', 'Overview'], ['detections', 'Detections'], ['evidence', 'Evidence']];
+  const row = (k, v) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>';
+  let body = '';
+  if (pl.tab === 'overview') {
+    body = '<h4>' + icon('users', 16) + ' Player Information</h4><dl class="pl-info">' +
+      row('Player ID', num(p.src)) + row('Name', escapeHtml(p.name || '?')) +
+      row('Ping', '<span class="pl-ping ' + pingClass(p.ping) + '">' + num(p.ping) + ' ms</span>') +
+      row('Risk', '<span class="ov-risk ' + riskClass(p.risk, t) + '">' + num(p.risk) + '</span>' +
+        ' <span class="muted">flag ' + num(t.flag) + ' · kick ' + num(t.kick) + '</span>') +
+      row('Signals', num(p.signals)) +
+      row('Lifecycle', escapeHtml(p.lifecycle || '—')) +
+      row('Ped', '<span class="mono">' + escapeHtml(p.ped || '—') + '</span>') +
+      row('Health / Armour', hpBar(p)) +
+      row('Client state', p.live ? '<span class="pl-state ok">● Connected</span>' : '<span class="pl-state bad">● Not reporting</span>') +
+      (p.frozen ? row('Frozen', '<span class="ov-chip bad">frozen</span>') : '') +
+      (p.contained ? row('Contained', '<span class="ov-chip bad">' + escapeHtml(p.contained) + '</span>') : '') +
+      (p.bucket != null ? row('Bucket', num(p.bucket)) : '') +
+      (p.vehicle ? row('Vehicle', '<span class="mono">' + escapeHtml(p.vehicle) + '</span>') : '') +
+      row('Session', p.sessionAge != null ? duration(p.sessionAge) : '—') +
+      (p.created != null ? row('Entities', num(p.created) + ' created · ' + num(p.denied) + ' denied') : '') +
+      '</dl>';
+  } else if (pl.tab === 'detections') {
+    const mine = (snap.feed || []).filter((e) => Number(e.src) === p.src);
+    body = mine.length ? '<ul class="pl-feed">' + mine.map((e) =>
+      '<li><div><b>' + escapeHtml(e.kind || '') + '</b> ' +
+      (e.weight ? '<span class="ov-chip bad">+' + num(e.weight) + '</span>' : '<span class="ov-chip dim">+0</span>') +
+      '<span class="muted">' + escapeHtml(ago(e.at, data.serverTime)) + '</span></div>' +
+      '<p>' + escapeHtml(e.detail || '') + '</p></li>').join('') + '</ul>'
+      : '<div class="ov-empty">' + icon('shield', 20) + '<b>No signals this session</b><span>Findings for this player appear here.</span></div>';
+  } else {
+    const mine = (data.evidence || []).filter((e) => e.player && (Number(e.player.src) === p.src || e.player.name === p.name));
+    body = mine.length ? '<ul class="pl-feed">' + mine.slice(0, 20).map((e) =>
+      '<li><div><b>' + escapeHtml(e.detection || 'Evidence') + '</b> <span class="ov-chip dim">' +
+      escapeHtml((e.screenshot || {}).status || 'no image') + (e.images ? ' · ' + e.images + ' img' : '') + '</span>' +
+      '<span class="muted">' + escapeHtml(ago(e.at, data.serverTime)) + '</span></div>' +
+      '<p class="mono">' + escapeHtml(e.resourceId || e.id) + '</p></li>').join('') + '</ul>' +
+      '<button class="ov-link" data-goto="Evidence">Open evidence ' + icon('arrow-right', 14) + '</button>'
+      : '<div class="ov-empty">' + icon('camera', 20) + '<b>No evidence on file</b><span>Cases and screenshots for this player appear here.</span></div>';
+  }
+  const act = (a, glyph, label, extra) => '<button class="pl-act' + (a === 'ban' || a === 'kick' ? ' danger' : '') + '" data-act="' + a +
+    '" data-src="' + p.src + '"' + (extra || '') + '>' + icon(glyph, 18) + '<span>' + label + '</span></button>';
+  const actions = can
+    ? '<h4>' + icon('zap', 16) + ' Quick Actions</h4><div class="pl-acts">' +
+      act('screenshot', 'camera', 'Shot') +
+      act('freeze', 'lock', p.frozen ? 'Unfreeze' : 'Freeze', ' data-on="' + (!p.frozen) + '"') +
+      act('warn', 'flag', 'Warn') + act('kick', 'logout', 'Kick') +
+      (admin ? act('ban', 'ban', 'Ban') : '') + '</div>'
+    : '<p class="muted pl-note">' + (data.online ? 'Your role cannot act on players.' : 'Actions are unavailable while the server is offline.') + '</p>';
+  return '<aside class="pl-panel">' +
+    '<header><span class="shell-avatar lg">' + escapeHtml((p.name || '?')[0].toUpperCase()) + '</span>' +
+      '<div><b>' + escapeHtml(p.name || '?') + '</b><small>ID: ' + p.src + '</small></div>' +
+      (p.live ? '<span class="ov-chip ok"><span class="status-dot"></span> Online</span>' : '<span class="ov-chip bad">Quiet</span>') +
+      '<button class="icon-button" data-plclose aria-label="Close player">' + icon('close', 15) + '</button></header>' +
+    '<nav class="pl-tabs">' + tabs.map(([k, l]) => '<button data-ptab="' + k + '" class="' + (pl.tab === k ? 'active' : '') + '">' + l + '</button>').join('') + '</nav>' +
+    '<div class="pl-panel-body">' + body + actions + '</div></aside>';
+}
+
 function viewPlayers() {
   const snap = data.snapshot || {};
-  const thresholds = (snap.overview || {}).thresholds;
-  const can = ['owner', 'administrator', 'moderator'].includes(data.role);
-  const rows = (snap.players || []).map((player) => {
-    const actions = can && data.online
-      ? '<button class="button small" data-act="screenshot" data-src="' + player.src + '">Shot</button> ' +
-        '<button class="button small" data-act="freeze" data-src="' + player.src + '" data-on="' +
-          (!player.frozen) + '">' + (player.frozen ? 'Unfreeze' : 'Freeze') + '</button> ' +
-        // Warn first: it is the mild option, so it sits before Kick rather
-        // than after Ban where nobody would reach for it.
-        '<button class="button small" data-act="warn" data-src="' + player.src + '">Warn</button> ' +
-        '<button class="button small" data-act="kick" data-src="' + player.src + '">Kick</button>' +
-        (['owner', 'administrator'].includes(data.role)
-          ? ' <button class="button small" data-act="ban" data-src="' + player.src + '">Ban</button>' : '')
-      : '<span class="muted">—</span>';
-    return '<tr class="' + riskClass(player.risk, thresholds) + '">' +
-      '<td><span class="player-cell"><span class="avatar tiny">' +
-        escapeHtml((player.name || '?')[0].toUpperCase()) + '</span> ' +
-        escapeHtml(player.name || '?') + '</span>' +
-        '<div class="muted">ID ' + player.src +
-        (player.frozen ? ' · <span class="badge warning">frozen</span>' : '') +
-        (player.contained ? ' · <span class="badge danger">contained</span>' : '') + '</div></td>' +
-      '<td><b>' + num(player.risk) + '</b></td>' +
-      '<td class="muted">' + num(player.ping) + ' ms</td>' +
-      '<td class="muted">' + escapeHtml(player.lifecycle || '—') + '</td>' +
-      '<td class="muted mono">' + escapeHtml(short(player.ped, 22)) + '</td>' +
-      '<td class="muted">' + num(player.health) + ' / ' + num(player.armour) + '</td>' +
-      '<td class="muted">' + num(player.signals) + '</td>' +
-      '<td><span class="badge ' + (player.live ? 'success' : 'danger') + '">' +
-        '<span class="status-dot"></span> ' + (player.live ? 'live' : 'quiet') + '</span></td>' +
-      '<td style="text-align:right;white-space:nowrap">' + actions + '</td></tr>';
-  });
-  return offlineNote() + panel('Players',
-    table(['Player', 'Risk', 'Ping', 'Lifecycle', 'Ped', 'HP / Armour', 'Signals', 'Client', ''],
-      rows, 'Nobody connected', 'Players appear here as soon as they join.'),
-    '<span class="badge">' + (snap.players || []).length + ' online</span>');
+  const o = snap.overview || {};
+  const t = o.thresholds || {};
+  const all = snap.players || [];
+  const slots = Number(o.maxSlots) || 0;
+  const pings = all.map((p) => Number(p.ping)).filter((v) => v >= 0);
+  const avgPing = pings.length ? Math.round(pings.reduce((a, b) => a + b, 0) / pings.length) : null;
+  const high = all.filter((p) => p.risk >= (t.kick || 110)).length;
+  const flagged = all.filter((p) => p.risk >= (t.flag || 40)).length;
+
+  const tiles = '<div class="pl-kpis">' +
+    kpi('users', 'Total Players', num(all.length), num(o.clientless) + ' not reporting' + (slots ? ' · ' + num(slots) + ' slots' : '')) +
+    kpi('shield', 'High Risk', num(high), num(flagged) + ' above flag threshold') +
+    kpi('wifi', 'Average Ping', avgPing == null ? '—' : avgPing + ' ms', 'Across connected players') +
+    kpi('clock', 'Uptime', o.uptime ? duration(o.uptime) : '—', 'Since resource started') + '</div>';
+
+  const lifecycles = [...new Set(all.map((p) => p.lifecycle).filter(Boolean))].sort();
+  const sel = (id, value, options) => '<select class="pl-filter" id="' + id + '">' + options.map(([v, l]) =>
+    '<option value="' + escapeHtml(v) + '"' + (v === value ? ' selected' : '') + '>' + escapeHtml(l) + '</option>').join('') + '</select>';
+  const bar = '<div class="pl-bar">' +
+    '<label class="pl-search">' + icon('search', 16) + '<input id="pl-q" type="search" autocomplete="off" placeholder="Search by name, ID or ped…" value="' + escapeHtml(pl.q) + '"></label>' +
+    sel('pl-status', pl.status, [['all', 'All Players'], ['live', 'Live client'], ['quiet', 'Not reporting'], ['frozen', 'Frozen']]) +
+    sel('pl-risk', pl.risk, [['all', 'All Risk'], ['clean', 'No risk'], ['risk', 'Carrying risk'], ['flag', 'Above flag (' + num(t.flag || 40) + ')'], ['kick', 'Kick range (' + num(t.kick || 110) + ')']]) +
+    sel('pl-life', pl.life, [['all', 'All Lifecycles']].concat(lifecycles.map((l) => [l, l]))) +
+    sel('pl-sort', pl.sort, [['id-asc', 'Sort: ID (ASC)'], ['id-desc', 'Sort: ID (DESC)'], ['risk-desc', 'Sort: Risk (high first)'], ['ping-asc', 'Sort: Ping (low first)'], ['name-asc', 'Sort: Name (A–Z)']]) +
+    '<span class="pl-spacer"></span>' +
+    '<button class="pl-btn" id="pl-export">' + icon('download', 15) + ' Export</button>' +
+    '<button class="pl-btn icon" id="pl-refresh" aria-label="Refresh">' + icon('rotate', 15) + '</button></div>';
+
+  const rows = playerRows();
+  if (pl.sel != null && !all.some((p) => p.src === pl.sel)) pl.sel = null;   // they left
+  const body = rows.map((p) =>
+    '<tr class="pl-row ' + riskClass(p.risk, t) + (p.src === pl.sel ? ' selected' : '') + '" data-player="' + p.src + '">' +
+    '<td class="muted">' + p.src + '</td>' +
+    '<td><span class="player-cell"><span class="shell-avatar sm">' + escapeHtml((p.name || '?')[0].toUpperCase()) + '</span>' +
+      '<span><b>' + escapeHtml(p.name || '?') + '</b><small class="muted">ID: ' + p.src +
+      (p.frozen ? ' · frozen' : '') + '</small></span></span></td>' +
+    '<td><span class="ov-risk ' + riskClass(p.risk, t) + '">' + num(p.risk) + '</span></td>' +
+    '<td><span class="pl-ping ' + pingClass(p.ping) + '">' + num(p.ping) + ' ms</span></td>' +
+    '<td class="muted">' + escapeHtml(p.lifecycle || '—') + '</td>' +
+    '<td class="muted mono">' + escapeHtml(short(p.ped, 20)) + '</td>' +
+    '<td>' + hpBar(p) + '</td>' +
+    '<td>' + (p.live ? '<span class="ov-chip ok"><span class="status-dot"></span> live</span>' : '<span class="ov-chip dim">quiet</span>') + '</td>' +
+    '<td class="muted">' + (p.sessionAge != null ? duration(p.sessionAge) : '—') + '</td>' +
+    '<td class="pl-more"><button class="icon-button" data-player="' + p.src + '" aria-label="Open player">' + icon('chevron-right', 15) + '</button></td></tr>').join('');
+  const table = rows.length
+    ? '<div class="table-scroll"><table class="ov-table pl-table"><thead><tr><th>#</th><th>Player</th><th>Risk</th><th>Ping</th>' +
+      '<th>Lifecycle</th><th>Ped</th><th>HP / Armour</th><th>Client</th><th>Session</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>'
+    : '<div class="ov-empty">' + icon('users', 22) + '<b>' + (all.length ? 'No players match these filters' : 'Nobody connected') + '</b>' +
+      '<span>' + (all.length ? 'Clear a filter to see everyone.' : 'Players appear here as soon as they join.') + '</span></div>';
+
+  const selected = all.find((p) => p.src === pl.sel);
+  return offlineNote() +
+    '<div class="pl-head"><div><h1>Players ' + icon('chevron-right', 24) + '</h1>' +
+    '<p class="muted">View and manage all connected players in real time. Click a player for details.</p></div>' + tiles + '</div>' +
+    '<div class="pl-layout' + (selected ? ' with-panel' : '') + '">' +
+      '<div class="pl-main">' + bar + '<section class="ov-card pl-card">' + table + '</section></div>' +
+      (selected ? playerPanel(selected) : '') +
+    '</div>';
+}
+
+function exportPlayers() {
+  const rows = playerRows();
+  const cols = ['src', 'name', 'risk', 'ping', 'lifecycle', 'ped', 'health', 'armour', 'live', 'frozen', 'signals', 'sessionAge'];
+  const csv = [cols.join(',')].concat(rows.map((p) => cols.map((c) =>
+    '"' + String(p[c] === undefined || p[c] === null ? '' : p[c]).replace(/"/g, '""') + '"').join(','))).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'players-' + (data.name || 'server').replace(/\W+/g, '-') + '-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '') + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function viewDetections() {
@@ -1245,7 +1379,7 @@ function render() {
   const wantsStats = STATS_TABS.includes(tab);
 
   document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
-  document.getElementById('main').classList.toggle('overview-route', tab === 'Overview');
+  document.getElementById('main').classList.toggle('overview-route', tab === 'Overview' || tab === 'Players');
   document.querySelector('.dashboard-title').hidden = !wantsHeader;
   document.getElementById('toolbar').hidden = tab === 'Overview';
   document.getElementById('stats').hidden = !wantsStats;
@@ -1340,6 +1474,21 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  // Players tab: select a row, switch panel tab, close, export, refresh.
+  if (tab === 'Players') {
+    const pick = event.target.closest('[data-player]');
+    if (pick) {
+      const src = Number(pick.dataset.player);
+      pl.sel = pl.sel === src && pick.tagName === 'TR' ? null : src;
+      pl.tab = 'overview';
+      return render();
+    }
+    const ptab = event.target.closest('[data-ptab]');
+    if (ptab) { pl.tab = ptab.dataset.ptab; return render(); }
+    if (event.target.closest('[data-plclose]')) { pl.sel = null; return render(); }
+    if (event.target.closest('#pl-export')) return exportPlayers();
+    if (event.target.closest('#pl-refresh')) return load(true);
+  }
   // "View all" / "Manage" / row chevrons on the Overview jump to a tab.
   const goto = event.target.closest('[data-goto]');
   if (goto) {
@@ -1642,6 +1791,12 @@ async function saveConfig() {
 }
 
 document.addEventListener('change', async (event) => {
+  const plFilter = { 'pl-status': 'status', 'pl-risk': 'risk', 'pl-life': 'life', 'pl-sort': 'sort' }[event.target.id];
+  if (plFilter) {
+    pl[plFilter] = event.target.value;
+    event.target.blur();
+    return render();
+  }
   if (event.target.id === 'ov-window') {
     activityWindow = event.target.value === '7d' ? '7d' : '24h';
     sessionStorage.setItem('nx_activity_window', activityWindow);
@@ -1752,6 +1907,15 @@ const setActivityQuery = researchSearch((v) => { activityQuery = v; });
 const setIdentityQuery = researchSearch((v) => { identityQuery = v; });
 
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'pl-q') {
+    // Re-render the roster, then hand focus and caret back to the box.
+    pl.q = event.target.value;
+    const caret = event.target.selectionStart;
+    render();
+    const box = document.getElementById('pl-q');
+    if (box) { box.focus(); box.setSelectionRange(caret, caret); }
+    return;
+  }
   if (event.target.id === 'act-q') return void setActivityQuery(event.target.value);
   if (event.target.id === 'idn-q') return void setIdentityQuery(event.target.value);
   if (event.target.id === 'ban-search') {
