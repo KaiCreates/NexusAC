@@ -836,7 +836,11 @@ let banFilter = 'all';
 let banPage = 1;
 let banSelected = [];
 
-const prettyLabel = (part) => part
+const PRETTY_CONFIG_NAMES = {
+  rpfblock: 'RPF protection',
+  signature: 'Blocked signatures',
+};
+const prettyLabel = (part) => PRETTY_CONFIG_NAMES[part] || part
   .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
   .replace(/^./, (c) => c.toUpperCase());
 /* Cards are grouped by the path prefix, and a path with three or more segments
