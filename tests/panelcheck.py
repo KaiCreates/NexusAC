@@ -35,6 +35,17 @@ SETTINGS = {
     "risk.decayPerMinute": {"value": 3, "kind": "number", "live": True, "lo": 0, "hi": 200},
     "cursor.enabled": {"value": True, "kind": "boolean", "live": False},
     "godmode.enabled": {"value": True, "kind": "boolean", "live": True},
+    "ocr.enabled": {"value": True, "kind": "boolean", "live": True},
+    "ocr.strongKeywords": {
+        "value": "eulen\nredengine\nlua executor", "kind": "string", "live": True,
+        "maxLen": 5000, "label": "Instant-match menu names",
+        "note": "One phrase per line. Any single match is an OCR finding.",
+    },
+    "ocr.keywords": {
+        "value": "self options\nweapon options\nnoclip", "kind": "string", "live": True,
+        "maxLen": 5000, "label": "Correlated menu words and phrases",
+        "note": "One phrase per line. Multiple entries must appear together.",
+    },
     "rpfblock.signature.five_x_zoom": {
         "value": True, "kind": "boolean", "live": True,
         "label": "5X weapon zoom", "note": "weapons.meta",
@@ -107,6 +118,12 @@ with sync_playwright() as p:
           page.locator("[data-cfg='rpfblock.signature.five_x_zoom']").count() == 1
           and "5X weapon zoom" in page.inner_text(".cfg-grid"))
     check("RPF switch shows the affected file", "weapons.meta" in page.inner_text(".cfg-grid"))
+    check("OCR word lists render as editable text areas",
+          page.locator("textarea[data-cfg='ocr.strongKeywords']").count() == 1
+          and page.locator("textarea[data-cfg='ocr.keywords']").count() == 1)
+    check("OCR list shows the server's current words",
+          "redengine" in page.input_value("[data-cfg='ocr.strongKeywords']")
+          and "weapon options" in page.input_value("[data-cfg='ocr.keywords']"))
     check("Save starts disabled", page.locator("#cfg-save").is_disabled())
     page.screenshot(path=OUT + "/cfg-grouped.png", full_page=False)
 

@@ -249,8 +249,12 @@ class SettingCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["setting"]
     path: Text
-    value: Union[bool, float, Annotated[str, Field(max_length=300)]]
-    expected: Union[bool, float, Annotated[str, Field(max_length=300)]]
+    # List-backed settings (OCR phrases and vehicle model tiers) use the same
+    # audited scalar command path as every other setting. The request endpoint
+    # is capped at 16 KiB, so 6 KiB per side leaves room for both value and the
+    # optimistic-concurrency `expected` value in one command.
+    value: Union[bool, float, Annotated[str, Field(max_length=6000)]]
+    expected: Union[bool, float, Annotated[str, Field(max_length=6000)]]
 
 
 class EntityCommand(BaseModel):
