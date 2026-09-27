@@ -565,6 +565,7 @@ function viewDetectors() {
       '<label class="pc-check">Discord notification <input name="discord" type="checkbox"' +
       (active.discord ? ' checked' : '') + '></label>' +
       '<p class="pc-note">' + escapeHtml(active.info || '') +
+      (active.evidenceLevel >= 3 ? ' This module relies heavily on client-side evidence; use Ban only after calibration.' : '') +
       ' Changes apply live and are saved to the server. Global Observe mode records findings without enforcement.</p>' +
       '<button class="button light" type="submit"' + (!editable || active.locked ? ' disabled' : '') +
       '>Save changes</button></form></aside>' : '';
