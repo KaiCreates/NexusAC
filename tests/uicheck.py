@@ -88,6 +88,12 @@ snapshot = {
         "Cursor.holdRatio": {"value": 0.65, "kind": "number", "live": True, "lo": 0, "hi": 1},
         "Entity.enabled": {"value": True, "kind": "boolean", "live": True},
         "State.settleSec": {"value": 120, "kind": "number", "live": False, "lo": 0, "hi": 600},
+        "weapons.allowlist": {"value": "WEAPON_PISTOL\nWEAPON_SMG", "kind": "string",
+                              "live": True, "maxLen": 6000},
+        "weapons.blacklist": {"value": "WEAPON_RPG", "kind": "string",
+                              "live": True, "maxLen": 6000},
+        "antiheadshot.mismatches": {"value": 3, "kind": "number", "live": True,
+                                    "lo": 2, "hi": 20},
     }, "profile": "default"},
     "events": {},
     "integrations": {"screenshots": "started",
@@ -144,6 +150,7 @@ with sync_playwright() as p:
     for name, needle in [("Players", "Suspect"), ("Detections", "godmode"),
                          ("Detectors", "NX-CURSOR-001"), ("Bans", "license:9f2c8ab31"),
                          ("Evidence", "Godmode"), ("Logs", "Godmode incident opened"),
+                         ("Items", "WEAPON_PISTOL"),
                          ("Configuration", "Cursor.holdRatio")]:
         page.click(".sidebar-link[data-tab='%s']" % name)
         page.wait_for_timeout(500)

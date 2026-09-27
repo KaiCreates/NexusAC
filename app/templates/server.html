@@ -31,6 +31,7 @@
       <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} <span>Webhooks</span></button>
       <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} <span>Integrations</span></button>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} <span>Logs</span></button>
+      <button class="sidebar-link" data-tab="Items">{{ ui.icon('log') }} <span>Whitelisted / Blacklisted</span></button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} <span>Configuration</span></button>
     </nav>
     <a class="shell-card" href="/dashboard">
@@ -75,7 +76,7 @@ const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
               'Activity', 'Identities', 'Screenshots', 'Protection', 'Webhooks',
-              'Integrations', 'Logs', 'Configuration'];
+              'Integrations', 'Logs', 'Items', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -1290,6 +1291,46 @@ function viewConfig() {
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
 }
 
+/* Weapon policy gets a dedicated view because operators add and remove single
+   paintball/loadout entries far more often than they edit the rest of the AC.
+   It still uses the same schema-whitelisted, audited `setting` command path. */
+function weaponNames(path) {
+  const setting = ((((data.snapshot || {}).config || {}).settings) || {})[path];
+  if (!setting || typeof setting.value !== 'string') return [];
+  return setting.value.split(/\r?\n|,/).map((v) => v.trim().toUpperCase())
+    .filter((v, i, all) => /^WEAPON_[A-Z0-9_]+$/.test(v) && all.indexOf(v) === i).sort();
+}
+
+function weaponPolicyCard(title, path, tone) {
+  const values = weaponNames(path);
+  const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+  const rows = values.map((name) => '<tr><td class="mono"><b>' + escapeHtml(name) + '</b></td>' +
+    '<td><span class="badge ' + tone + '">' + (path.endsWith('allowlist') ? 'Allowed' : 'Blocked') + '</span></td>' +
+    '<td style="text-align:right">' + (editable ? '<button class="button small" data-weapon-remove="' +
+      escapeHtml(name) + '" data-weapon-path="' + path + '">Remove</button>' : '') + '</td></tr>').join('');
+  return panel(title,
+    table(['Weapon item', 'Policy', ''], rows ? [rows] : [], 'No items',
+      'Add a WEAPON_NAME below. Changes are validated and audited by the server.') +
+    (editable ? '<div class="entity-rule-add"><input class="cfg-input" data-weapon-input="' + path +
+      '" placeholder="WEAPON_PISTOL" maxlength="64" spellcheck="false">' +
+      '<button class="button small light" data-weapon-add="' + path + '">Add item</button></div>' : ''));
+}
+
+function viewItems() {
+  const settings = (((data.snapshot || {}).config || {}).settings) || {};
+  if (!settings['weapons.allowlist'] || !settings['weapons.blacklist']) {
+    return offlineNote() + panel('Weapon item policy',
+      '<div class="empty-state"><h3>Waiting for the updated server module</h3>' +
+      '<p>Restart NexusAC so the weapon allowlist and blocklist schema is reported.</p></div>');
+  }
+  return offlineNote() + '<div class="notice" style="margin-bottom:16px"><b>Whitelist wins.</b> ' +
+    'Whitelisted paintball/loadout weapons are not stripped or refused, while damage, range, fire-rate and headshot integrity checks stay active.</div>' +
+    '<div class="cfg-grid">' +
+      weaponPolicyCard('Whitelisted weapon items', 'weapons.allowlist', 'good') +
+      weaponPolicyCard('Blacklisted weapon items', 'weapons.blacklist', 'bad') +
+    '</div>' + commandLog();
+}
+
 /* What actually happened to the last few commands.
 
    This panel exists because its absence was a real bug: saving a setting said
@@ -1334,7 +1375,7 @@ const VIEWS = {
   Activity: viewActivity, Identities: viewIdentities,
   Screenshots: viewScreenshots, Protection: viewProtection,
   Webhooks: viewWebhooks, Integrations: viewIntegrations,
-  Logs: viewLogs, Configuration: viewConfig,
+  Logs: viewLogs, Items: viewItems, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -1551,6 +1592,37 @@ document.addEventListener('click', async (event) => {
   if (unban) {
     return reasonDialog('Lift this ban?', '',
       (reason) => send({ type: 'unban', identifier: unban.dataset.unban, reason }, 'Unban'));
+  }
+
+  const weaponRemove = event.target.closest('[data-weapon-remove]');
+  if (weaponRemove) {
+    const path = weaponRemove.dataset.weaponPath;
+    const settings = (((data.snapshot || {}).config || {}).settings) || {};
+    const setting = settings[path];
+    if (!setting) return note(msg, 'The server has not published that weapon policy.', 'bad');
+    const name = weaponRemove.dataset.weaponRemove;
+    const value = weaponNames(path).filter((item) => item !== name).join('\n');
+    const ok = await send({ type: 'setting', path, value, expected: setting.value }, 'Remove ' + name);
+    if (ok) { setTimeout(() => load(true), 1800); }
+    return;
+  }
+
+  const weaponAdd = event.target.closest('[data-weapon-add]');
+  if (weaponAdd) {
+    const path = weaponAdd.dataset.weaponAdd;
+    const settings = (((data.snapshot || {}).config || {}).settings) || {};
+    const setting = settings[path];
+    const field = document.querySelector('[data-weapon-input="' + path + '"]');
+    const name = (field && field.value || '').trim().toUpperCase();
+    if (!/^WEAPON_[A-Z0-9_]+$/.test(name))
+      return note(msg, 'Use a valid item name such as WEAPON_PISTOL.', 'bad');
+    if (!setting) return note(msg, 'The server has not published that weapon policy.', 'bad');
+    const names = weaponNames(path);
+    if (names.includes(name)) return note(msg, name + ' is already in this list.', 'bad');
+    names.push(name); names.sort();
+    const ok = await send({ type: 'setting', path, value: names.join('\n'), expected: setting.value }, 'Add ' + name);
+    if (ok) { if (field) field.value = ''; setTimeout(() => load(true), 1800); }
+    return;
   }
 
   if (event.target.closest('[data-manual-ban]')) {
