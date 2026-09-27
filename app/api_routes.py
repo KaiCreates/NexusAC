@@ -338,7 +338,7 @@ async def identity_search(request: Request):
     user = authenticated(request)
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
-    rate(f"identities:{user['id']}", 120, 60)
+    rate(f"identities:{user['user_id']}", 120, 60)
     db.ensure_schema()
     return reply(
         identity_store.search(
@@ -356,7 +356,7 @@ async def identities_online(request: Request):
     user = authenticated(request)
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
-    rate(f"identities-online:{user['id']}", 120, 60)
+    rate(f"identities-online:{user['user_id']}", 120, 60)
     servers = db.query(
         "SELECT id,name,last_seen,snapshot FROM nx_servers WHERE workspace=%s ORDER BY name",
         (user["workspace"],),
@@ -402,7 +402,7 @@ async def identity_aliases(request: Request):
     require(uid, 400, "An identity id is required.")
     # The traversal is several indexed queries deep, so it gets a tighter budget
     # than the plain search above.
-    rate(f"aliases:{user['id']}", 30, 60)
+    rate(f"aliases:{user['user_id']}", 30, 60)
     return reply(
         identity_store.aliases(
             user["workspace"], uid, _int_param(request, "depth", identity_store.MAX_DEPTH)
@@ -417,7 +417,7 @@ async def identity_aliases(request: Request):
 @router.get("/events")
 async def events_search(request: Request):
     user = authenticated(request)
-    rate(f"events:{user['id']}", 180, 60)
+    rate(f"events:{user['user_id']}", 180, 60)
     db.ensure_schema()
     q = request.query_params
     return reply(
@@ -447,7 +447,7 @@ async def events_types(request: Request):
 @router.get("/punishments")
 async def punishments_search(request: Request):
     user = authenticated(request)
-    rate(f"punishments:{user['id']}", 180, 60)
+    rate(f"punishments:{user['user_id']}", 180, 60)
     q = request.query_params
     result = punishment_store.search(
         user["workspace"],
@@ -581,7 +581,7 @@ async def snapshot(request: Request, server_id: str):
 async def server_activity(request: Request, server_id: str):
     """Hourly (24h) or 6-hourly (7d) event counts for the Overview chart."""
     user = authenticated(request)
-    rate(f"activity:{user['id']}", 60, 60)
+    rate(f"activity:{user['user_id']}", 60, 60)
     _server_of(user, server_id)
     db.ensure_schema()
     return reply(event_store.activity(
