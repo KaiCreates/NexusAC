@@ -186,6 +186,19 @@ def search(workspace: str, raw: str, page: int, size: int) -> dict:
     }
 
 
+def summary(workspace: str) -> dict:
+    """Workspace-scoped aggregates for the identity directory header."""
+    row = db.one(
+        """SELECT count(*) AS total,
+                  count(*) FILTER (WHERE last_seen >= extract(epoch FROM now())::bigint - 86400) AS recent,
+                  COALESCE(sum(sessions), 0) AS sessions,
+                  count(*) FILTER (WHERE banned) AS flagged
+             FROM nx_identities WHERE workspace=%s""",
+        (workspace,),
+    ) or {}
+    return {key: int(row.get(key) or 0) for key in ("total", "recent", "sessions", "flagged")}
+
+
 def detail(workspace: str, uid: str) -> dict:
     row = db.one(
         """SELECT uid, first_seen, last_seen, sessions, last_name, banned, ban_reason, banned_at

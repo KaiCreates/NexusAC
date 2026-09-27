@@ -8,93 +8,54 @@
   {{ shell.workspace_side('identities') }}
   <div class="dashboard-main">
     {{ shell.topbar(user, [('Workspace', '/dashboard'), ('Identities', None)]) }}
-
-    <div class="dashboard-content">
-      <div class="dashboard-title">
-        <div>
-          <span class="eyebrow">INVESTIGATION</span>
-          <h1>Identities.</h1>
-          <p class="muted">
-            Every player seen by the servers in this workspace, and the accounts
-            they share identifiers with.
-          </p>
+    <main class="dashboard-content id-page">
+      <header class="id-page-head">
+        <div><span class="eyebrow">WORKSPACE NETWORK</span><h1>Player identities</h1>
+          <p class="muted">A persistent history of players seen by every server in this workspace.</p></div>
+        <div class="id-head-actions">
+          <button class="button" id="id-live-refresh">{{ ui.icon('rotate', 16) }} Sync live data</button>
+          <button class="button light" id="id-export">{{ ui.icon('download', 16) }} Export</button>
         </div>
-      </div>
+      </header>
 
-      <div class="id-search">
-        {{ ui.icon('search', 17) }}
-        <input id="id-q" type="search" autocomplete="off" spellcheck="false"
-               value="{{ query }}"
-               placeholder="License, Discord ID, Steam ID, IP address, or a player name">
-        <kbd>/</kbd>
-      </div>
-      <p class="id-hint muted" id="id-hint">
-        Paste any identifier. A 40-character hex string is read as a license, 17–20
-        digits as a Discord ID, four dotted octets as an IP; anything else is
-        searched as a name.
-      </p>
+      <section class="id-stats" aria-label="Identity statistics">
+        <article class="id-stat">{{ ui.icon('users', 19) }}<div><span>Total identities</span><b id="id-stat-total">—</b></div><small>workspace-wide</small></article>
+        <article class="id-stat">{{ ui.icon('clock', 19) }}<div><span>Seen in 24 hours</span><b id="id-stat-recent">—</b></div><small>unique players</small></article>
+        <article class="id-stat">{{ ui.icon('server', 19) }}<div><span>Sessions stored</span><b id="id-stat-sessions">—</b></div><small>reported by servers</small></article>
+        <article class="id-stat">{{ ui.icon('shield-check', 19) }}<div><span>Flagged accounts</span><b id="id-stat-flagged">—</b></div><small>banned records</small></article>
+      </section>
 
       <section class="id-live-panel">
-        <div class="id-live-head">
-          <div>
-            <span class="eyebrow">LIVE NETWORK</span>
-            <h2>Connected players</h2>
-            <p class="muted">Live identifiers from every online server in this workspace.</p>
-          </div>
-          <div class="id-live-status"><span class="status-dot"></span><span id="id-live-count">Loading…</span>
-            <button class="id-tool" id="id-live-refresh" title="Refresh live players" aria-label="Refresh live players">{{ ui.icon('rotate', 15) }}</button></div>
-        </div>
-        <div class="table-scroll id-live-table-wrap">
-          <table class="id-live-table"><thead><tr>
-            <th>Player</th><th>Server</th>
-            <th><span class="id-live-label"><img src="/static/brand/discord.svg" alt="">Discord</span></th>
-            <th><span class="id-live-label"><img src="/static/brand/steam.svg" alt="">Steam</span></th>
-            <th><span class="id-live-label"><img src="/static/brand/fivem.svg" alt="">FiveM</span></th>
-            <th><span class="id-live-label">{{ ui.icon('key', 14) }}License</span></th>
-            <th><span class="id-live-label">{{ ui.icon('shield-check', 14) }}Device</span></th>
-            <th>Other IDs</th>
-            <th><span class="id-live-label">{{ ui.icon('server', 14) }}IP</span></th>
-            <th>Ping</th><th>Session</th>
-          </tr></thead><tbody id="id-live-rows"></tbody></table>
-        </div>
-        <p class="id-live-note muted">The table refreshes automatically. IP/device fields are opt-in per server; CFX tokens are never sent to the website.</p>
+        <div class="id-live-head"><div><span class="eyebrow">LIVE NOW</span><h2>Connected players</h2>
+          <p class="muted">Presence refreshes automatically; identity history remains available when players disconnect.</p></div>
+          <div class="id-live-status"><span class="status-dot"></span><span id="id-live-count">Connecting…</span></div></div>
+        <div class="table-scroll id-live-table-wrap"><table class="id-live-table"><thead><tr>
+          <th>Player</th><th>Server</th><th>Discord</th><th>Steam</th><th>FiveM</th><th>License</th><th>Device</th><th>Other IDs</th><th>IP</th><th>Ping</th><th>Session</th>
+        </tr></thead><tbody id="id-live-rows"></tbody></table></div>
+        <p class="id-live-note muted">Identity records are saved to the workspace as servers mirror join/identifier updates. IP and device collection depend on server configuration.</p>
       </section>
 
-      <div class="id-toolbar" id="id-toolbar" hidden>
-        <a class="id-tool" href="/identities" title="Clear the search">{{ ui.icon('grid', 15) }}</a>
-        <span class="id-tool static" id="id-count">—</span>
-        <button class="id-tool" id="id-tree-toggle">{{ ui.icon('braces', 15) }} <span>Hide account tree</span></button>
-        <span class="id-spacer"></span>
-        <div class="id-pager">
-          <button class="id-page-btn" id="id-prev" aria-label="Previous page">{{ ui.icon('arrow-left', 15) }}</button>
-          <span class="id-page-of"><b id="id-page">1</b> of <span id="id-pages">1</span></span>
-          <button class="id-page-btn" id="id-next" aria-label="Next page">{{ ui.icon('arrow-right', 15) }}</button>
-          <select id="id-size" aria-label="Results per page">
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
+      <section class="id-directory">
+        <div class="id-directory-head"><div><span class="eyebrow">INVESTIGATION</span><h2>Identity directory</h2>
+          <p class="muted">Select a player to inspect their saved platform identifiers, including while offline.</p></div>
+          <label class="id-search">{{ ui.icon('search', 17) }}<input id="id-q" type="search" autocomplete="off" spellcheck="false" value="{{ query }}" placeholder="Search name, Discord, Steam, license, IP…"><kbd>/</kbd></label>
         </div>
-      </div>
-
-      <section class="id-tree-panel" id="id-tree-panel" hidden>
-        <div class="id-tree-head">
-          <span class="eyebrow">ACCOUNT TREE</span>
-          <span class="muted" id="id-tree-note"></span>
+        <p class="id-hint muted" id="id-hint">Search by player name or identifier.</p>
+        <div class="id-toolbar" id="id-toolbar" hidden>
+          <a class="id-tool" href="/identities" title="Clear search">{{ ui.icon('grid', 15) }} All identities</a>
+          <span class="id-tool static" id="id-count">—</span>
+          <button class="id-tool" id="id-tree-toggle">{{ ui.icon('braces', 15) }} <span>Show account tree</span></button>
+          <span class="id-spacer"></span><div class="id-pager"><button class="id-page-btn" id="id-prev" aria-label="Previous page">{{ ui.icon('arrow-left', 15) }}</button><span class="id-page-of"><b id="id-page">1</b> of <span id="id-pages">1</span></span><button class="id-page-btn" id="id-next" aria-label="Next page">{{ ui.icon('arrow-right', 15) }}</button><select id="id-size" aria-label="Results per page"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></div>
         </div>
-        <svg id="id-tree" viewBox="0 0 1000 560" role="img"
-             aria-label="Graph of accounts linked by shared identifiers"></svg>
-        <div class="id-tree-legend" id="id-tree-legend"></div>
+        <section class="id-tree-panel" id="id-tree-panel" hidden><div class="id-tree-head"><span class="eyebrow">ACCOUNT LINK GRAPH</span><span class="muted" id="id-tree-note"></span></div><svg id="id-tree" viewBox="0 0 1000 560" role="img" aria-label="Graph of accounts linked by shared identifiers"></svg><div class="id-tree-legend" id="id-tree-legend"></div></section>
+        <p class="form-message" id="msg" hidden></p>
+        <div class="id-workspace">
+          <div class="id-table-wrap"><table class="id-directory-table"><thead><tr><th><input type="checkbox" aria-label="Select all on page" id="id-select-all"></th><th>Player / account</th><th>Identifiers</th><th>Last seen</th><th>Status</th><th>Actions</th></tr></thead><tbody id="id-grid"></tbody></table><div class="id-empty" id="id-empty" hidden></div></div>
+          <aside class="id-detail-panel" id="id-detail-panel"><div class="id-detail-placeholder">{{ ui.icon('search', 30) }}<b>Select an identity</b><span>Saved identifiers and account activity will appear here.</span></div></aside>
+        </div>
       </section>
-
-      <p class="form-message" id="msg" hidden></p>
-      <div class="id-grid" id="id-grid"></div>
-      <div class="id-empty" id="id-empty" hidden></div>
-    </div>
+    </main>
   </div>
 </div>
 {% endblock %}
-
-{% block script %}
-<script src="/static/identities.js"></script>
-{% endblock %}
+{% block script %}<script src="/static/identities.js"></script>{% endblock %}

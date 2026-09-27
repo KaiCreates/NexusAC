@@ -381,6 +381,15 @@ async def identities_online(request: Request):
     return reply({"players": rows, "servers": online_servers, "updatedAt": now()})
 
 
+@router.get("/identities/summary")
+async def identities_summary(request: Request):
+    user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view network identity data.")
+    db.ensure_schema()
+    return reply(identity_store.summary(user["workspace"]))
+
+
 @router.get("/identities/detail")
 async def identity_detail(request: Request):
     user = authenticated(request)

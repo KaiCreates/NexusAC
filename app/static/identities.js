@@ -14,17 +14,11 @@
    picture. */
 
 const KIND_STYLE = {
-  discord:  { label: 'Discord',  short: 'D', colour: '#5865f2' },
-  steam:    { label: 'Steam',    short: 'S', colour: '#66c0f4' },
-  fivem:    { label: 'Cfx',      short: 'C', colour: '#f40552' },
-  license:  { label: 'License',  short: 'L', colour: '#8b8b93' },
-  license2: { label: 'License2', short: 'L', colour: '#8b8b93' },
-  live:     { label: 'Live',     short: 'W', colour: '#0078d4' },
-  xbl:      { label: 'Xbox',     short: 'X', colour: '#107c10' },
-  ip:       { label: 'IP',       short: 'I', colour: '#e08b3c' },
-  token:    { label: 'Token',    short: 'T', colour: '#a06ee1' },
-  device:   { label: 'Device',   short: 'H', colour: '#2fb2a4' },
-  name:     { label: 'Name',     short: 'N', colour: '#6b6b73' },
+  discord:  { label: 'Discord', colour: '#5865f2' }, steam: { label: 'Steam', colour: '#66c0f4' },
+  fivem: { label: 'FiveM', colour: '#f40552' }, license: { label: 'License', colour: '#8b8b93' },
+  license2: { label: 'License 2', colour: '#8b8b93' }, live: { label: 'Xbox Live', colour: '#0078d4' },
+  xbl: { label: 'Xbox', colour: '#107c10' }, ip: { label: 'IP address', colour: '#e08b3c' },
+  token: { label: 'Token', colour: '#a06ee1' }, device: { label: 'Device', colour: '#2fb2a4' }, name: { label: 'Name', colour: '#6b6b73' },
 };
 const BRAND_ICONS = {
   discord: '/static/brand/discord.svg',
@@ -62,6 +56,7 @@ const state = {
   selected: null,
   onlinePlayers: [],
   onlineServers: 0,
+  detail: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -102,12 +97,23 @@ async function runSearch(push) {
   state.rows = result.data.results || [];
   state.total = result.data.total || 0;
   el('id-hint').textContent = describeMatch(result.data);
+  loadSummary();
 
   if (push) {
     const url = q ? '/identities?q=' + encodeURIComponent(q) : '/identities';
     history.replaceState(null, '', url);
   }
   render();
+}
+
+async function loadSummary() {
+  const result = await api('/identities/summary');
+  if (!result.ok) return;
+  const summary = result.data;
+  el('id-stat-total').textContent = Number(summary.total || 0).toLocaleString();
+  el('id-stat-recent').textContent = Number(summary.recent || 0).toLocaleString();
+  el('id-stat-sessions').textContent = Number(summary.sessions || 0).toLocaleString();
+  el('id-stat-flagged').textContent = Number(summary.flagged || 0).toLocaleString();
 }
 
 async function runAliases(uid) {
@@ -155,6 +161,7 @@ async function loadOnlinePlayers() {
   state.onlinePlayers = result.data.players || [];
   state.onlineServers = result.data.servers || 0;
   renderOnlinePlayers();
+  if (state.rows.length) render();
 }
 
 function renderOnlinePlayers() {
@@ -166,8 +173,8 @@ function renderOnlinePlayers() {
     return !query || [player.name, player.server, player.src, net.ip || '', values]
       .some((value) => String(value).toLowerCase().includes(query));
   });
-  el('id-live-count').textContent = players.length + ' player' + (players.length === 1 ? '' : 's') +
-    ' · ' + state.onlineServers + ' server' + (state.onlineServers === 1 ? '' : 's') + ' · auto-refresh 5s';
+  el('id-live-count').textContent = players.length + ' online · ' +
+    state.onlineServers + ' server' + (state.onlineServers === 1 ? '' : 's') + ' · auto-refresh 5s';
   const byKind = (player, kinds) => {
     const net = player.network || {};
     const entry = (net.identifiers || []).find((item) => kinds.includes(item.kind));
@@ -241,45 +248,25 @@ function render() {
   }
 
   empty.hidden = true;
-  grid.innerHTML = state.rows.map(card).join('');
+  grid.innerHTML = state.rows.map(rowHTML).join('');
+  if (state.selected && state.rows.some((row) => row.uid === state.selected)) loadDetail(state.selected);
 }
 
-function card(row) {
+function rowHTML(row) {
   const selected = row.uid === state.selected ? ' selected' : '';
-  const root = row.uid === state.root ? ' root' : '';
   const hash = row.uid.includes(':') ? row.uid.split(':').slice(1).join(':') : row.uid;
+  const live = liveFor(row);
+  const marks = Object.entries(row.kinds || {}).filter(([kind]) => kind !== 'name');
+  const chips = marks.slice(0, 5).map(([kind, values]) => '<span class="id-platform-chip" title="' + escapeHtml((KIND_STYLE[kind] || {}).label || kind) + ': ' + escapeHtml(values[0]) + '">' + identifierIcon(kind) + '<span>' + escapeHtml((KIND_STYLE[kind] || {}).label || kind) + '</span><b>' + values.length + '</b></span>').join('');
+  return '<tr class="id-directory-row' + selected + '" data-uid="' + escapeHtml(row.uid) + '"><td><input type="checkbox" class="id-row-select" aria-label="Select ' + escapeHtml(row.name) + '"></td><td><button class="id-player-select" data-select="' + escapeHtml(row.uid) + '"><span class="id-avatar">' + icon('users', 19) + '</span><span><b>' + escapeHtml(row.name) + '</b><small title="' + escapeHtml(row.uid) + '">' + escapeHtml(hash) + '</small></span></button></td><td><div class="id-chip-list">' + (chips || '<span class="muted">No identifiers stored</span>') + (marks.length > 5 ? '<span class="id-more">+' + (marks.length - 5) + '</span>' : '') + '</div></td><td><b>' + escapeHtml(ago(row.lastSeen)) + '</b><small>' + escapeHtml(new Date(Number(row.lastSeen) * 1000).toLocaleString()) + '</small></td><td><span class="id-presence ' + (live ? 'online' : 'offline') + '"><i></i>' + (live ? 'Online' : 'Offline') + '</span>' + (row.banned ? '<small class="id-flagged">Flagged</small>' : '') + '</td><td><button class="id-row-action" data-alias="' + escapeHtml(row.uid) + '" title="Find linked accounts" aria-label="Find linked accounts">' + icon('braces', 16) + '</button><button class="id-row-action" data-expand="' + escapeHtml(row.uid) + '" title="Open player details" aria-label="Open player details">' + icon('arrow-up-right', 16) + '</button></td></tr>';
+}
 
-  const badges = [];
-  Object.keys(row.kinds || {}).forEach((kind) => {
-    const style = KIND_STYLE[kind];
-    if (!style || kind === 'name') return;
-    row.kinds[kind].forEach((value) => {
-      badges.push(
-        '<span class="id-badge" style="--badge:' + style.colour + '" ' +
-        'title="' + escapeHtml(style.label + ': ' + value) + '">' +
-        (BRAND_ICONS[kind] ? '<img src="' + BRAND_ICONS[kind] + '" alt="">' : style.short) + '</span>'
-      );
-    });
+function liveFor(row) {
+  const marks = row.kinds || {};
+  return state.onlinePlayers.find((player) => {
+    const ids = (player.network || {}).identifiers || [];
+    return ids.some((entry) => (marks[entry.kind] || []).includes(entry.value));
   });
-
-  return (
-    '<article class="id-card' + selected + root + '" data-uid="' + escapeHtml(row.uid) + '">' +
-      '<div class="id-card-main">' +
-        '<h3>' + escapeHtml(row.name) +
-          (row.banned ? ' <span class="id-warn" title="' +
-            escapeHtml(row.reason || 'Banned') + '">&#9888;</span>' : '') +
-        '</h3>' +
-        '<p class="id-uid" title="' + escapeHtml(row.uid) + '">' + escapeHtml(hash) + '</p>' +
-        '<div class="id-badges">' + (badges.join('') || '<span class="muted">no identifiers</span>') + '</div>' +
-      '</div>' +
-      '<div class="id-card-side">' +
-        '<button class="id-card-btn" data-expand="' + escapeHtml(row.uid) + '" ' +
-          'title="Everything known about this account">&#10530;</button>' +
-        '<button class="id-card-btn" data-alias="' + escapeHtml(row.uid) + '" ' +
-          'title="Find accounts sharing identifiers with this one">' + icon('search', 15) + '</button>' +
-      '</div>' +
-    '</article>'
-  );
 }
 
 /* --------------------------------------------------------------------- *
@@ -353,50 +340,28 @@ function drawTree() {
 /* --------------------------------------------------------------------- *
  * Detail drawer
  * --------------------------------------------------------------------- */
-async function showDetail(uid) {
+async function loadDetail(uid) {
+  if (state.detail && state.detail.uid === uid) { renderDetail(state.detail); return; }
   const result = await api('/identities/detail?uid=' + encodeURIComponent(uid));
   if (!result.ok) return fail(result.error);
-  const row = result.data;
+  state.detail = result.data;
+  renderDetail(state.detail);
+}
 
+function renderDetail(row) {
   const groups = {};
   (row.marks || []).forEach((mark) => {
     (groups[mark.kind] = groups[mark.kind] || []).push(mark);
   });
 
-  const body =
-    '<dl class="id-facts">' +
-      fact('First seen', ago(row.firstSeen)) +
-      fact('Last seen', ago(row.lastSeen)) +
-      fact('Sessions', row.sessions) +
-      fact('Identifiers', row.markCount) +
-      (row.banned ? fact('Banned', escapeHtml(row.reason || 'no reason recorded')) : '') +
-    '</dl>' +
-    Object.keys(groups).sort().map((kind) => {
-      const style = KIND_STYLE[kind] || { label: kind, colour: '#6b6b73' };
-      return '<section class="id-marks">' +
-        '<h4><span class="id-badge" style="--badge:' + style.colour + '">' +
-          (BRAND_ICONS[kind] ? '<img src="' + BRAND_ICONS[kind] + '" alt="">' : (style.short || '?')) +
-          '</span>' + escapeHtml(style.label) + '</h4>' +
-        groups[kind].map((mark) =>
-          '<div class="id-mark"><code>' + escapeHtml(mark.value) + '</code>' +
-          '<span class="muted">seen ' + mark.seen + '× · last ' + ago(mark.lastSeen) + '</span></div>'
-        ).join('') +
-      '</section>';
-    }).join('') +
-    '<div class="button-row">' +
-      '<button class="button light small" data-drawer-alias="' + escapeHtml(uid) + '">' +
-        icon('search', 15) + ' Find alias accounts</button>' +
-    '</div>';
-
-  Modal.show(body, (dialog) => {
-    const button = dialog.querySelector('[data-drawer-alias]');
-    if (button) {
-      button.addEventListener('click', () => {
-        Modal.close();
-        runAliases(uid);
-      });
-    }
-  }, row.banned ? 'BANNED ACCOUNT' : 'ACCOUNT', row.name);
+  const player = liveFor(row);
+  const panel = el('id-detail-panel');
+  panel.innerHTML = '<div class="id-detail-top"><div class="id-avatar large">' + icon('users', 24) + '</div><div class="id-detail-name"><span class="eyebrow">PLAYER INFORMATION</span><h3>' + escapeHtml(row.name) + '</h3><span class="id-presence ' + (player ? 'online' : 'offline') + '"><i></i>' + (player ? 'Online' : 'Offline') + '</span></div></div>' +
+    '<div class="id-detail-actions"><b>Quick actions</b><button class="button" data-alias="' + escapeHtml(row.uid) + '">' + icon('braces', 15) + ' Investigate linked accounts</button></div>' +
+    '<section class="id-detail-section"><h4>' + icon('key', 15) + ' Identifiers <span>' + (row.marks || []).length + '</span></h4>' +
+      (row.marks || []).map((mark) => '<div class="id-detail-mark"><span>' + identifierIcon(mark.kind) + '<b>' + escapeHtml((KIND_STYLE[mark.kind] || {}).label || mark.kind) + '</b></span><code title="' + escapeHtml(mark.value) + '">' + escapeHtml(mark.value) + '</code><button class="id-copy" data-copy="' + escapeHtml(mark.value) + '" title="Copy identifier" aria-label="Copy identifier">' + icon('key', 14) + '</button></div>').join('') + '</section>' +
+    '<section class="id-detail-section"><h4>' + icon('activity', 15) + ' Activity</h4><dl class="id-facts">' + fact('First seen', ago(row.firstSeen)) + fact('Last seen', ago(row.lastSeen)) + fact('Sessions', Number(row.sessions || 0).toLocaleString()) + fact('Server', player ? escapeHtml(player.server) : 'Offline') + '</dl></section>' +
+    (row.banned ? '<div class="id-detail-warning">' + icon('shield', 16) + '<span><b>Flagged account</b><small>' + escapeHtml(row.reason || 'No reason recorded') + '</small></span></div>' : '');
 }
 
 function fact(label, value) {
@@ -439,9 +404,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const alias = event.target.closest('[data-alias]');
     if (alias) return runAliases(alias.dataset.alias);
     const expand = event.target.closest('[data-expand]');
-    if (expand) return showDetail(expand.dataset.expand);
-    const card = event.target.closest('[data-uid]');
-    if (card) { state.selected = card.dataset.uid; render(); }
+    const select = event.target.closest('[data-select]');
+    if (expand || select) { state.selected = (expand || select).dataset.expand || (expand || select).dataset.select; state.detail = null; render(); }
+  });
+  el('id-detail-panel').addEventListener('click', async (event) => {
+    const copy = event.target.closest('[data-copy]');
+    if (copy) { try { await navigator.clipboard.writeText(copy.dataset.copy); note(el('msg'), 'Identifier copied.', 'success'); } catch (_) { note(el('msg'), 'Clipboard access is unavailable in this browser.', 'error'); } }
+    const alias = event.target.closest('[data-alias]');
+    if (alias) runAliases(alias.dataset.alias);
   });
 
   el('id-tree').addEventListener('click', (event) => {
@@ -449,7 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!node) return;
     state.selected = node.dataset.node;
     render();
-    const card = document.querySelector('.id-card.selected');
+    const card = document.querySelector('.id-directory-row.selected');
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 
@@ -471,6 +441,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   el('id-live-refresh').addEventListener('click', loadOnlinePlayers);
+  el('id-export').addEventListener('click', () => {
+    const lines = [['name','uid','firstSeen','lastSeen','sessions','banned','kind','value'].join(',')];
+    state.rows.forEach((row) => Object.entries(row.kinds || {}).forEach(([kind, values]) => values.forEach((value) => {
+      lines.push([row.name,row.uid,row.firstSeen,row.lastSeen,row.sessions,row.banned,kind,value].map((field) => '"' + String(field == null ? '' : field).replace(/"/g, '""') + '"').join(','));
+    })));
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const href = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = href; link.download = 'nexus-identities.csv'; link.click(); URL.revokeObjectURL(href);
+  });
+  el('id-select-all').addEventListener('change', (event) => document.querySelectorAll('.id-row-select').forEach((box) => { box.checked = event.target.checked; }));
 
   runSearch(false);
   loadOnlinePlayers();
