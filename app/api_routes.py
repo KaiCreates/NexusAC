@@ -512,12 +512,13 @@ async def snapshot(request: Request, server_id: str):
                 "actor": c["actor_name"],
                 "type": (c["body"] or {}).get("type"),
                 "path": (c["body"] or {}).get("path") or (c["body"] or {}).get("detector")
+                        or (c["body"] or {}).get("id") or (c["body"] or {}).get("category")
                         or (c["body"] or {}).get("signal") or (c["body"] or {}).get("model"),
                 # Boolean false is a real setting value, not a missing value.
                 # Using an `or` chain made every "turn off" command appear in
                 # the audit panel with a blank value even when it succeeded.
                 "value": next(((c["body"] or {})[key] for key in
-                               ("value", "mode", "action", "policy")
+                               ("value", "mode", "action", "policy", "enabled")
                                if key in (c["body"] or {})), None),
                 "created": int(c["created"]),
                 "result": c["result"],

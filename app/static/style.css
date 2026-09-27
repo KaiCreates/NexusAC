@@ -4598,6 +4598,7 @@ th.ev-cols button:hover { color: #f5f5f5; }
 .pc-card>header h3{font-size:14px;margin:0}.pc-card>header span{font-size:11px;color:#888}
 .pc-row{display:flex;align-items:center;gap:12px;min-height:69px;padding:11px 19px;border-top:1px solid #1d1e20}
 .pc-row:first-of-type{border-top:0}.pc-glyph{width:32px;height:32px;display:grid;place-items:center;border:1px solid #262729;border-radius:8px;color:#96999f}
+.pc-info{background:transparent;cursor:help}.pc-info:hover,.pc-info:focus-visible{color:#fff;border-color:#7b7d84}
 .pc-label{flex:1;min-width:0}.pc-label b,.pc-label small{display:block}.pc-label b{font-size:13px}.pc-label small{font-size:11px;color:#777b80;margin-top:3px}
 .pc-config{border:0;background:none;color:#a9abb0;padding:9px;cursor:pointer}.pc-config:hover{color:white}
 .pc-switch{width:37px;height:22px;padding:3px;border:0;border-radius:20px;background:#393b3f;cursor:pointer}
@@ -4611,3 +4612,22 @@ th.ev-cols button:hover { color: #f5f5f5; }
 @media(max-width:650px){.pc-toolbar{align-items:flex-start;flex-direction:column}.pc-drawer{width:100vw}}
 .cleanup-card{padding-bottom:18px}.cleanup-card p{color:#92949a;font-size:12px;margin:16px 19px}.cleanup-card .button-row{padding:0 19px}
 .ov-quick{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}.ov-quick .button{border-color:#383a3e;background:#18191b;color:#eee}.ov-quick .button:hover{background:#292a2d}
+
+/* Configuration: calm category navigation, readable cards, and contextual help. */
+.dashboard.full .cfg-tabs{display:flex;overflow-x:auto;gap:10px;padding:10px 0 19px;scrollbar-width:thin}
+.dashboard.full .cfg-tabs button{flex:1 0 auto;min-width:110px;padding:12px 15px;border:1px solid #27292d;border-radius:12px;background:#111214;color:#aeb0b5;font-weight:600}
+.dashboard.full .cfg-tabs button:hover,.dashboard.full .cfg-tabs button.active{color:#fff;border-color:#62656b;background:#222327;box-shadow:inset 0 -2px 0 #e9e9eb}
+.dashboard.full .cfg-grid{column-gap:16px}
+.dashboard.full .cfg-card{background:#101113;border:1px solid #33353a;box-shadow:0 12px 25px #0002}
+.dashboard.full .cfg-card-head{background:linear-gradient(125deg,#202125,#111214 70%);min-height:88px}
+.dashboard.full .cfg-row{margin:8px 10px;min-height:54px;padding:9px 12px;border:1px solid #292b30;border-radius:10px;background:#111214}
+.dashboard.full .cfg-row:hover,.dashboard.full .cfg-row.staged{background:#1d1e22;border-color:#505258}
+.cfg-help{display:grid;place-items:center;flex:none;width:28px;height:28px;border:0;border-radius:50%;background:transparent;color:#a5a8ae;cursor:pointer;font-size:17px}
+.cfg-help:hover,.cfg-help:focus-visible{color:#fff;background:#303238;outline:1px solid #777a82}
+.cfg-drawer-body{padding:24px 27px;display:grid;gap:18px;color:#c8c9cf;font-size:13px;line-height:1.6}
+.cfg-drawer-body p{margin:0}.cfg-drawer-body dl{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;margin:0;padding:18px;background:#17181b;border:1px solid #2d2f35;border-radius:10px}
+.cfg-drawer-body dt{color:#90939a}.cfg-drawer-body dd{margin:0;overflow-wrap:anywhere}
+.cfg-drawer-body .cfg-input,.cfg-drawer-body .cfg-area,.cfg-drawer-body select{width:100%;max-width:none}
+.cfg-drawer-body .toggle{justify-self:start}
+.cfg-row .badge.warning{white-space:nowrap}
+@media(max-width:700px){.cfg-drawer-body dl{grid-template-columns:1fr;gap:5px}.dashboard.full .cfg-tabs button{min-width:100px}}

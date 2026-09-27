@@ -81,7 +81,88 @@ const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidenc
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
+let serverData = null;
 let lastSignature = '';
+const pendingChanges = new Map();
+const webhookDrafts = {};
+const fieldDrafts = {};
+const protectionDrafts = {};
+
+function changeKey(body) {
+  if (body.type === 'setting') return 'setting:' + body.path;
+  if (body.type === 'detector') return 'detector:' + body.detector;
+  if (body.type === 'protection') return 'protection:' + body.id;
+  if (body.type === 'webhook') return 'webhook:' + body.category;
+  return null;
+}
+function pending(key) { return pendingChanges.has(key); }
+function confirmed(snap, body, baselineRevision) {
+  const persistence = ((snap.config || {}).persistence || {});
+  if (!persistence.verified || persistence.dirty ||
+      Number(persistence.revision || 0) <= Number(baselineRevision || 0)) return false;
+  if (body.type === 'setting')
+    return (((snap.config || {}).settings || {})[body.path] || {}).value === body.value;
+  if (body.type === 'detector')
+    return (snap.detectors || []).some((p) => p.id === body.detector && p.mode === body.mode);
+  if (body.type === 'protection')
+    return (snap.protections || []).some((p) => p.id === body.id &&
+      ['enabled', 'profile', 'action', 'minConfidence', 'screenshot', 'discord']
+        .every((field) => p[field] === body[field]));
+  if (body.type === 'webhook') {
+    const channel = (((snap.integrations || {}).webhooks) || [])
+      .find((p) => p.category === body.category);
+    return !!channel && (!!channel.configuredDirect === !!body.url);
+  }
+  return true;
+}
+function displaySnapshot(source) {
+  const snap = JSON.parse(JSON.stringify(source || {}));
+  pendingChanges.forEach(({ body }) => {
+    if (body.type === 'setting') {
+      const setting = (((snap.config || {}).settings || {})[body.path]);
+      if (setting) setting.value = body.value;
+      if (body.path === 'webhooks.separate' && snap.integrations)
+        snap.integrations.webhookSeparate = body.value;
+      if (body.path === 'general.mode' && snap.overview) snap.overview.mode = body.value;
+    } else if (body.type === 'detector') {
+      const detector = (snap.detectors || []).find((p) => p.id === body.detector);
+      if (detector) detector.mode = body.mode;
+      const protection = (snap.protections || []).find((p) => p.id === body.detector);
+      if (protection) protection.mode = body.mode;
+    } else if (body.type === 'protection') {
+      const protection = (snap.protections || []).find((p) => p.id === body.id);
+      if (protection) Object.assign(protection, protectionFields(body));
+    } else if (body.type === 'webhook') {
+      const channel = (((snap.integrations || {}).webhooks) || [])
+        .find((p) => p.category === body.category);
+      if (channel) channel.configuredDirect = !!body.url;
+    }
+  });
+  return snap;
+}
+function showServerData(fresh) {
+  serverData = fresh;
+  const commands = new Map((fresh.commands || []).map((c) => [c.id, c]));
+  pendingChanges.forEach((entry, key) => {
+    const command = commands.get(entry.id);
+    if (command && ['failed', 'expired', 'uncertain', 'cancelled'].includes(command.status)) {
+      pendingChanges.delete(key);
+      if (entry.body.type === 'setting') configEdits[entry.body.path] = entry.body.value;
+      note(msg, entry.label + ' was not saved: ' + (command.result || command.status), 'bad');
+    } else if (command && command.status === 'succeeded' &&
+               confirmed(fresh.snapshot || {}, entry.body, entry.revision)) {
+      pendingChanges.delete(key);
+      if (entry.body.type === 'webhook') delete webhookDrafts[entry.body.category];
+      if (entry.body.type === 'protection') delete protectionDrafts[entry.body.id];
+      note(msg, entry.label + ' saved and confirmed by the server.', 'good');
+    } else if (Date.now() - entry.at > 90000) {
+      pendingChanges.delete(key);
+      if (entry.body.type === 'setting') configEdits[entry.body.path] = entry.body.value;
+      note(msg, entry.label + ' has not been confirmed. Check the server connection and recent changes.', 'bad');
+    }
+  });
+  data = { ...fresh, snapshot: displaySnapshot(fresh.snapshot) };
+}
 
 const num = (value) => (value === undefined || value === null ? '—' : Number(value).toLocaleString());
 const short = (value, length) => {
@@ -533,22 +614,27 @@ function viewDetectors() {
     const cards = Object.entries(groups).map(([group, rows]) =>
       '<section class="pc-card"><header><h3>' + escapeHtml(group) + ' protection</h3><span>' +
       rows.filter((p) => p.enabled).length + ' / ' + rows.length + ' enabled</span></header>' +
-      rows.map((p) => '<div class="pc-row"><span class="pc-glyph">' + icon('shield-check', 16) + '</span>' +
+      rows.map((p) => '<div class="pc-row"><button class="pc-glyph pc-info" type="button" ' +
+        'data-protection-open="' + escapeHtml(p.id) + '" title="' +
+        escapeHtml(p.info || 'Open detector details') + '" aria-label="About ' +
+        escapeHtml(p.name) + '">' + icon('shield-check', 16) + '</button>' +
         '<div class="pc-label"><b>' + escapeHtml(p.name) + '</b><small>' +
         escapeHtml(p.mode || 'enforce') + ' · ' + escapeHtml(p.profile) + ' · ' + escapeHtml(p.action) + ' at ' + num(p.minConfidence) +
         '% confidence</small></div><button class="pc-config" data-protection-open="' + escapeHtml(p.id) +
         '" aria-label="Configure ' + escapeHtml(p.name) + '">' + icon('sliders', 17) + '</button>' +
         '<button class="pc-switch ' + (p.enabled ? 'on' : '') + '" data-protection-toggle="' +
         escapeHtml(p.id) + '" aria-label="Toggle ' + escapeHtml(p.name) + '" aria-pressed="' +
-        !!p.enabled + '"' + (!editable || p.locked ? ' disabled' : '') + '><i></i></button></div>').join('') +
+        !!p.enabled + '"' + (!editable || p.locked || pending('protection:' + p.id) ? ' disabled' : '') +
+        '><i></i></button></div>').join('') +
       '</section>').join('');
     const active = protections.find((p) => p.id === openProtection);
+    const selected = active && { ...active, ...(protectionDrafts[active.id] || {}) };
     const drawer = active ? '<div class="pc-shade" data-protection-close></div><aside class="pc-drawer" role="dialog" aria-label="' +
       escapeHtml(active.name) + ' settings"><header><span class="eyebrow">NEXUSAC / ' + escapeHtml(data.name || 'SERVER') +
       '</span><button data-protection-close aria-label="Close">×</button><h2>' + escapeHtml(active.name) +
       '</h2></header><form id="protection-form" data-protection-id="' + escapeHtml(active.id) + '">' +
       '<label class="pc-check">Protection enabled <input name="enabled" type="checkbox"' +
-      (active.enabled ? ' checked' : '') + '></label>' +
+      (selected.enabled ? ' checked' : '') + '></label>' +
       '<label>Detector mode <select data-detector="' + escapeHtml(active.id) +
       '" data-expected="' + escapeHtml(active.mode || 'enforce') + '"' +
       (!editable || active.locked ? ' disabled' : '') + '>' +
@@ -556,29 +642,30 @@ function viewDetectors() {
       (active.mode === v ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) +
       '</option>').join('') + '</select></label>' +
       '<label>Detection profile<select name="profile">' + ['relaxed', 'balanced', 'strict'].map((v) =>
-        '<option value="' + v + '"' + (active.profile === v ? ' selected' : '') + '>' +
+        '<option value="' + v + '"' + (selected.profile === v ? ' selected' : '') + '>' +
         v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
       '<label>Enforcement<select name="action">' + ['log', 'kick', 'ban'].map((v) =>
-        '<option value="' + v + '"' + (active.action === v ? ' selected' : '') + '>' +
+        '<option value="' + v + '"' + (selected.action === v ? ' selected' : '') + '>' +
         v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
-      '<label>Minimum confidence <output id="pc-confidence">' + num(active.minConfidence) + '%</output>' +
+      '<label>Minimum confidence <output id="pc-confidence">' + num(selected.minConfidence) + '%</output>' +
       '<input name="minConfidence" type="range" min="50" max="100" value="' +
-      num(active.minConfidence) + '"></label>' +
+      num(selected.minConfidence) + '"></label>' +
       '<label class="pc-check">Evidence screenshot <input name="screenshot" type="checkbox"' +
-      (active.screenshot ? ' checked' : '') + '></label>' +
+      (selected.screenshot ? ' checked' : '') + '></label>' +
       '<label class="pc-check">Discord notification <input name="discord" type="checkbox"' +
-      (active.discord ? ' checked' : '') + '></label>' +
+      (selected.discord ? ' checked' : '') + '></label>' +
       '<p class="pc-note">' + escapeHtml(active.info || '') +
       (active.evidenceLevel >= 3 ? ' This module relies heavily on client-side evidence; use Ban only after calibration.' : '') +
       ' Changes apply live and are saved to the server. Global Observe mode records findings without enforcement.</p>' +
-      '<button class="button light" type="submit"' + (!editable || active.locked ? ' disabled' : '') +
-      '>Save changes</button></form></aside>' : '';
+      '<button class="button light" type="submit"' +
+      (!editable || active.locked || pending('protection:' + active.id) ? ' disabled' : '') +
+      '>' + (pending('protection:' + active.id) ? 'Saving…' : 'Save changes') + '</button></form></aside>' : '';
     return offlineNote() + '<div class="pc-toolbar"><div><span class="eyebrow">PROTECTION CENTER</span>' +
       '<h2>Detection modules</h2><p>Configure each detector and choose when evidence becomes enforcement.</p></div>' +
       '<div class="button-row"><button class="button small ' + (mode === 'observe' ? 'light' : '') +
-      '" data-global-mode="observe"' + (!editable || mode === 'observe' ? ' disabled' : '') +
+      '" data-global-mode="observe"' + (!editable || mode === 'observe' || pending('setting:general.mode') ? ' disabled' : '') +
       '>Observe</button><button class="button small ' + (mode === 'enforce' ? 'light' : '') +
-      '" data-global-mode="enforce"' + (!editable || mode === 'enforce' ? ' disabled' : '') +
+      '" data-global-mode="enforce"' + (!editable || mode === 'enforce' || pending('setting:general.mode') ? ' disabled' : '') +
       '>Enforce</button></div></div><div class="pc-grid">' + cards + '</div>' + drawer +
       commandLog();
   }
@@ -588,7 +675,7 @@ function viewDetectors() {
   const globalControl = editable && data.online && modeSetting
     ? '<div class="button-row">' + ['observe', 'enforce'].map((mode) =>
         '<button class="button small ' + (globalMode === mode ? 'light' : '') + '" data-global-mode="' +
-        mode + '"' + (globalMode === mode ? ' disabled' : '') + '>' +
+        mode + '"' + (globalMode === mode || pending('setting:general.mode') ? ' disabled' : '') + '>' +
         (mode === 'observe' ? 'Observe only' : 'Enforce protection') + '</button>').join('') + '</div>'
     : '<span class="badge ' + (globalMode === 'enforce' ? 'success' : 'warning') + '">' +
       escapeHtml(globalMode) + '</span>';
@@ -598,7 +685,8 @@ function viewDetectors() {
       ? '<span class="badge">locked</span>'
       : (editable && data.online
         ? '<select data-detector="' + escapeHtml(detector.id) + '" data-expected="' +
-          escapeHtml(mode) + '">' + ['disabled', 'observe', 'enforce'].map((option) =>
+          escapeHtml(mode) + '"' + (pending('detector:' + detector.id) ? ' disabled' : '') + '>' +
+          ['disabled', 'observe', 'enforce'].map((option) =>
             '<option value="' + option + '"' + (option === mode ? ' selected' : '') + '>' +
             option + '</option>').join('') + '</select>'
         : '<span class="badge ' + (mode === 'enforce' ? 'success' : mode === 'observe' ? 'warning'
@@ -957,8 +1045,6 @@ const WEBHOOK_CATEGORIES = [
   ['errors', 'Errors', 'The anti-cheat reporting its own failures.'],
   ['screenshots', 'Detection screenshots', 'Captured evidence images attached to detection incidents.'],
 ];
-const pendingWebhooks = {};
-
 function viewWebhooks() {
   const integrations = (data.snapshot || {}).integrations || {};
   const channels = integrations.webhooks || [];
@@ -973,9 +1059,7 @@ function viewWebhooks() {
     const c = byCategory[key] || {};
     const configured = !!c.configured;
     const inactive = key !== 'main' && !separate;
-    const pendingAt = pendingWebhooks[key] || 0;
-    if (configured || (pendingAt && Date.now() - pendingAt >= 15000)) delete pendingWebhooks[key];
-    const saving = !configured && pendingAt && Date.now() - pendingAt < 15000;
+    const saving = pending('webhook:' + key);
 
     const state = saving
       ? '<span class="badge warning">saving…</span>'
@@ -998,13 +1082,20 @@ function viewWebhooks() {
     return '<article class="wh-card' + (inactive ? ' muted-card' : '') + '">' +
       '<div class="wh-head"><div><b>' + escapeHtml(label) + '</b>' +
       '<small>' + escapeHtml(why) + '</small></div>' + state + '</div>' +
+      '<div class="wh-health">Current destination: <span class="mono">' +
+        escapeHtml(c.displayUrl || 'not set') + '</span>' +
+        (c.configuredDirect ? ' · direct channel' : configured ? ' · inherited from Everything' : '') +
+        '<br>Direct channel: <span class="mono">' +
+        escapeHtml(c.directDisplayUrl || 'not set') + '</span></div>' +
       health +
       (editable
         ? '<div class="wh-form">' +
           '<input type="text" class="cfg-input wh-input" data-wh="' + key + '" ' +
-          'placeholder="Paste Discord webhook URL" autocomplete="url" spellcheck="false">' +
-          '<button class="button small light" data-wh-save="' + key + '">Save</button>' +
-          (configured ? '<button class="button small" data-wh-clear="' + key + '">Clear</button>' : '') +
+          'placeholder="Paste Discord webhook URL" autocomplete="off" spellcheck="false" value="' +
+          escapeHtml(webhookDrafts[key] || '') + '"' + (saving ? ' disabled' : '') + '>' +
+          '<button class="button small light" data-wh-save="' + key + '"' + (saving ? ' disabled' : '') + '>Save</button>' +
+          (c.configuredDirect ? '<button class="button small" data-wh-clear="' + key + '"' +
+            (saving ? ' disabled' : '') + '>Clear</button>' : '') +
           '</div>'
         : '') +
       '</article>';
@@ -1012,9 +1103,8 @@ function viewWebhooks() {
 
   return offlineNote() +
     '<div class="notice" style="margin-bottom:16px">' +
-    '<b>Webhook settings</b> A configured channel is shown as active after the server accepts it. ' +
-    'For safety, the full Discord URL is never displayed again; paste a new URL to replace it or use ' +
-    'Clear to remove it.</div>' +
+    '<b>Webhook settings</b> The current destination and its public ID are shown above; ' +
+    'the secret token is always hidden. A new URL remains in the field until the server confirms it.</div>' +
     panel('Routing',
       '<div class="cfg-row"><div class="cfg-label"><b>Separate channel per category</b>' +
       '<small>webhooks.separate · off sends everything to the Everything channel</small></div>' +
@@ -1022,7 +1112,8 @@ function viewWebhooks() {
       (editable
         ? '<button type="button" class="toggle cfg-toggle ' + (separate ? 'on' : '') +
           '" data-cfg="webhooks.separate" data-kind="boolean" role="switch" ' +
-          'aria-checked="' + separate + '" aria-label="Toggle separate webhooks"><span></span></button>'
+          'aria-checked="' + separate + '" aria-label="Toggle separate webhooks"' +
+          (pending('setting:webhooks.separate') ? ' disabled' : '') + '><span></span></button>'
         : '<span class="cfg-readonly">' + separate + '</span>') +
       '</div></div>',
       queued ? '<span class="badge warning">' + num(queued) + ' queued</span>'
@@ -1195,17 +1286,16 @@ function viewScreenshots() {
    firing one per keystroke would flood the queue. */
 
 const CONFIG_TABS = {
-  Core: ['general', 'risk', 'heartbeat', 'panel', 'eventlog', 'protection', 'trustscore', 'cleanup'],
-  Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
-              'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
-              'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing',
-              // These eight were mapped to no tab at all, so they collected in
-              // "Other" -- eight real detectors sitting in a bucket nobody
-              // thinks to open.
-              'armory', 'weapondamage', 'backdoor', 'ocr', 'playerstate', 'rpfblock', 'sensors', 'social'],
-  Entity: ['vehicles', 'entitybehaviour', 'entitylimits'],
-  Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
-                'honeypot', 'trust', 'txadmin', 'connect'],
+  Settings: ['general', 'risk', 'heartbeat', 'panel', 'eventlog', 'protection', 'trustscore',
+             'cleanup', 'banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence',
+             'log', 'honeypot', 'trust', 'txadmin', 'connect', 'webhooks'],
+  Client: ['cursor', 'state', 'network', 'inputcheck', 'integrity', 'lua', 'backdoor',
+           'ocr', 'rpfblock', 'sensors', 'social'],
+  Movement: ['godmode', 'freecam', 'playerguard', 'ragdoll', 'stamina', 'playerstate'],
+  Weapons: ['combat', 'weapons', 'targeting', 'antiheadshot', 'shots', 'armory', 'weapondamage'],
+  Event: ['resourceguard', 'chatguard'],
+  Entity: ['entity', 'vehicles', 'entitybehaviour', 'entitylimits'],
+  Explosions: ['griefing'],
 };
 const GROUP_ICONS = {
   general: 'settings', risk: 'radar', heartbeat: 'activity', combat: 'scan-line',
@@ -1221,8 +1311,9 @@ const GROUP_ICONS = {
 };
 
 let configEdits = {};
-let configTab = 'All';
+let configTab = 'Settings';
 let configSearch = '';
+let openSetting = null;
 let banQuery = '';
 let banSort = 'newest';
 let banFilter = 'all';
@@ -1264,16 +1355,19 @@ function tabOf(group) {
 
 function settingControl(path, setting, editable) {
   const staged = Object.prototype.hasOwnProperty.call(configEdits, path);
-  const value = staged ? configEdits[path] : setting.value;
+  const value = Object.prototype.hasOwnProperty.call(fieldDrafts, path)
+    ? fieldDrafts[path] : staged ? configEdits[path] : setting.value;
+  const locked = pending('setting:' + path);
   if (!editable) return '<span class="cfg-readonly">' + escapeHtml(String(value)) + '</span>';
 
   if (typeof setting.value === 'boolean') {
     return '<button type="button" class="toggle cfg-toggle ' + (value ? 'on' : '') + '" data-cfg="' + escapeHtml(path) +
       '" data-kind="boolean" role="switch" aria-checked="' + (value ? 'true' : 'false') +
-      '" aria-label="Toggle ' + escapeHtml(path) + '" title="' + (value ? 'On' : 'Off') + '"><span></span></button>';
+      '" aria-label="Toggle ' + escapeHtml(path) + '" title="' + (locked ? 'Saving' : value ? 'On' : 'Off') +
+      '"' + (locked ? ' disabled' : '') + '><span></span></button>';
   }
   if (setting.values) {
-    return '<select data-cfg="' + escapeHtml(path) + '" data-kind="enum">' +
+    return '<select data-cfg="' + escapeHtml(path) + '" data-kind="enum"' + (locked ? ' disabled' : '') + '>' +
       Object.keys(setting.values).map((option) => '<option value="' + escapeHtml(option) + '"' +
         (option === value ? ' selected' : '') + '>' + escapeHtml(option) + '</option>').join('') +
       '</select>';
@@ -1285,7 +1379,8 @@ function settingControl(path, setting, editable) {
   // through a 150px input is not an editing experience.
   if (!numeric && (setting.maxLen || 0) > 300) {
     return '<textarea data-cfg="' + escapeHtml(path) + '" data-kind="string" rows="3" ' +
-      'maxlength="' + Number(setting.maxLen) + '" class="cfg-area" spellcheck="false">' +
+      'maxlength="' + Number(setting.maxLen) + '" class="cfg-area" spellcheck="false"' +
+      (locked ? ' disabled' : '') + '>' +
       escapeHtml(String(value)) + '</textarea>';
   }
 
@@ -1294,7 +1389,8 @@ function settingControl(path, setting, editable) {
     (setting.lo !== undefined ? ' min="' + setting.lo + '"' : '') +
     (setting.hi !== undefined ? ' max="' + setting.hi + '"' : '') +
     (setting.maxLen ? ' maxlength="' + Number(setting.maxLen) + '"' : '') +
-    ' value="' + escapeHtml(String(value)) + '" class="cfg-input' + (numeric ? ' cfg-num' : '') + '">';
+    ' value="' + escapeHtml(String(value)) + '" class="cfg-input' + (numeric ? ' cfg-num' : '') +
+    '"' + (locked ? ' disabled' : '') + '>';
 }
 
 function entityRulesCard(editable) {
@@ -1332,7 +1428,7 @@ function viewConfig() {
     (groups[group] = groups[group] || []).push(path);
   }
 
-  const tabs = ['All'].concat(Object.keys(CONFIG_TABS))
+  const tabs = Object.keys(CONFIG_TABS).concat(['All'])
     .concat(paths.some((p) => tabOf(groupOf(p)) === 'Other') ? ['Other'] : []);
   const dirty = Object.keys(configEdits).length;
   const persistence = (snap.config || {}).persistence || {};
@@ -1394,12 +1490,17 @@ function viewConfig() {
       // characters -- cannot share a row with its label. Those stack instead,
       // with the field on its own line at full width.
       const long = typeof setting.value === 'string' && (setting.maxLen || 0) > 300;
+      const saving = pending('setting:' + path);
       return '<div class="cfg-row' + (staged ? ' staged' : '') + (long ? ' wide' : '') + '">' +
         '<div class="cfg-label"><b>' + escapeHtml(label) + '</b><small>' +
         escapeHtml(setting.note || path) + (setting.note ? ' · ' + escapeHtml(path) : '') +
         (range ? ' · ' + escapeHtml(range) : '') +
         (setting.live ? '' : ' · needs restart') + '</small></div>' +
-        '<div class="cfg-control">' + settingControl(path, setting, editable) + '</div></div>';
+        '<div class="cfg-control">' + (saving ? '<span class="badge warning">saving…</span>' : '') +
+        '<button type="button" class="cfg-help" data-setting-open="' + escapeHtml(path) +
+        '" title="' + escapeHtml(setting.note || 'View this setting and its current value') +
+        '" aria-label="More about ' + escapeHtml(label) + '">ⓘ</button>' +
+        settingControl(path, setting, editable) + '</div></div>';
     }).join('');
     // "vehicles.speed" reads as "Vehicles · Speed", and the icon comes from the
     // root segment so a sub-group keeps its parent's glyph.
@@ -1411,11 +1512,23 @@ function viewConfig() {
       rows + '</section>';
   }).join('');
 
+  const detail = openSetting && settings[openSetting];
+  const drawer = detail ? '<div class="pc-shade" data-setting-close></div><aside class="pc-drawer cfg-drawer" role="dialog" aria-label="Setting details">' +
+    '<header><span class="eyebrow">CONFIGURATION / ' + escapeHtml(tabOf(groupOf(openSetting)).toUpperCase()) +
+    '</span><button data-setting-close aria-label="Close">×</button><h2>' +
+    escapeHtml(detail.label || prettyLabel(openSetting.split('.').pop())) + '</h2></header>' +
+    '<div class="cfg-drawer-body"><p>' + escapeHtml(detail.note ||
+      'Configure this setting for the server. Changes apply after Save and server confirmation.') + '</p>' +
+    '<dl><dt>Setting path</dt><dd class="mono">' + escapeHtml(openSetting) + '</dd>' +
+    '<dt>Current server value</dt><dd class="mono">' + escapeHtml(String(((((serverData || data).snapshot || {}).config || {}).settings || {})[openSetting]?.value)) + '</dd>' +
+    '<dt>Applies</dt><dd>' + (detail.live ? 'Live, without restart' : 'After resource restart') + '</dd></dl>' +
+    '<label>New value</label>' + settingControl(openSetting, detail, editable) +
+    '<p class="muted">Use Save at the top of Configuration. The value stays visible while the server applies it.</p></div></aside>' : '';
   return offlineNote() + persistencePanel + header + '<div class="cfg-grid">' + cards + '</div>' +
     entityRulesCard(editable) +
     historyPanel +
     commandLog() +
-    (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
+    (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>') + drawer;
 }
 
 /* Weapon policy gets a dedicated view because operators add and remove single
@@ -1476,7 +1589,7 @@ const COMMAND_STATUS = {
 
 function commandLog() {
   const rows = (data.commands || []).filter(
-    (c) => c.type === 'setting' || c.type === 'entity' || c.type === 'detector' || c.type === 'punish');
+    (c) => ['setting', 'entity', 'detector', 'protection', 'webhook', 'punish'].includes(c.type));
   if (!rows.length) return '';
 
   const body = rows.slice(0, 10).map((c) => {
@@ -1484,7 +1597,7 @@ function commandLog() {
     const detail = c.result || hint;
     return '<tr>' +
       '<td class="mono">' + escapeHtml(c.path || c.type) + '</td>' +
-      '<td class="mono">' + escapeHtml(String(c.value)) + '</td>' +
+      '<td class="mono">' + escapeHtml(c.type === 'webhook' ? '(secret)' : String(c.value)) + '</td>' +
       '<td><span class="badge' + (tone ? ' ' + tone : '') + '">' + escapeHtml(label) + '</span></td>' +
       '<td>' + escapeHtml(detail || '—') + '</td>' +
       '<td class="muted">' + escapeHtml(c.actor || '') + ' · ' + ago(c.created, data.serverTime) + '</td>' +
@@ -1599,7 +1712,22 @@ function render() {
   if (wantsStats) renderStats();
   document.querySelectorAll('.sidebar-link[data-tab]').forEach((link) =>
     link.classList.toggle('active', link.dataset.tab === tab));
+  const focused = document.activeElement;
+  const focusKey = focused && (focused.dataset.cfg || focused.dataset.wh);
+  const focusType = focused && (focused.dataset.cfg ? 'cfg' : 'wh');
+  const inDrawer = focused && !!focused.closest('.cfg-drawer');
+  const caret = focused && typeof focused.selectionStart === 'number' ? focused.selectionStart : null;
   document.getElementById('view').innerHTML = (VIEWS[tab] || viewOverview)();
+  if (focusKey) {
+    const scope = inDrawer ? document.querySelector('.cfg-drawer') : document.getElementById('view');
+    const replacement = scope && Array.from(scope.querySelectorAll('[data-' + focusType + ']'))
+      .find((node) => node.dataset[focusType] === focusKey);
+    if (replacement && !replacement.disabled) {
+      replacement.focus();
+      if (caret !== null && replacement.setSelectionRange && replacement.type !== 'number')
+        replacement.setSelectionRange(caret, caret);
+    }
+  }
 }
 
 async function load(force) {
@@ -1609,10 +1737,11 @@ async function load(force) {
     if (result.status === 401) return (location.href = '/login?next=/dashboard');
     return note(msg, result.error, 'bad');
   }
-  data = result.data;
+  showServerData(result.data);
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
-  const signature = JSON.stringify([tab, data.online, data.status, data.lastSeen, data.snapshot,
+  const signature = JSON.stringify([tab, data.online, data.status, data.snapshot,
+                                    data.commands, Object.keys(configEdits),
                                     (data.evidence || []).length]);
   if (signature === lastSignature && !force) return;
   lastSignature = signature;
@@ -1626,11 +1755,27 @@ function playerOf(src) {
 }
 
 async function send(body, label) {
+  const key = changeKey(body);
+  if (key && pending(key)) {
+    note(msg, label + ' is still waiting for server confirmation.', 'bad');
+    return false;
+  }
+  const revision = (((serverData || {}).snapshot || {}).config || {}).persistence?.revision || 0;
+  if (key) {
+    pendingChanges.set(key, { id: null, body, label, at: Date.now(), revision });
+    if (serverData) data = { ...serverData, snapshot: displaySnapshot(serverData.snapshot) };
+    render();
+  }
   const result = await api('/servers/' + SERVER + '/commands', body);
-  note(msg, result.ok
-    ? label + ' updated successfully. Waiting for live confirmation from the server…'
-    : result.error, result.ok ? 'good' : 'bad');
-  setTimeout(() => load(true), 800);
+  if (key && result.ok) pendingChanges.get(key).id = result.data.id;
+  if (key && !result.ok) {
+    pendingChanges.delete(key);
+    if (serverData) data = { ...serverData, snapshot: displaySnapshot(serverData.snapshot) };
+    render();
+  }
+  note(msg, result.ok ? label + ' queued; waiting for the server to save it.' : result.error,
+    result.ok ? 'warning' : 'bad');
+  if (result.ok) setTimeout(() => load(true), 800);
   return result.ok;
 }
 
@@ -1663,6 +1808,9 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  const settingOpen = event.target.closest('[data-setting-open]');
+  if (settingOpen) { openSetting = settingOpen.dataset.settingOpen; return render(); }
+  if (event.target.closest('[data-setting-close]')) { openSetting = null; return render(); }
   const cleanup = event.target.closest('[data-cleanup]');
   if (cleanup) {
     const category = cleanup.dataset.cleanup;
@@ -1942,18 +2090,7 @@ document.addEventListener('click', async (event) => {
     const url = (field && field.value || '').trim();
     if (!url) return note(msg, 'Paste a webhook URL first.', 'bad');
     const ok = await send({ type: 'webhook', category: key, url }, key + ' webhook');
-    if (field && ok) {
-      field.value = '';
-      field.placeholder = 'Saved — paste a new URL to replace it';
-      pendingWebhooks[key] = Date.now();
-      render();
-      // The resource may collect the command on its next heartbeat. Keep the
-      // status alive long enough for that round trip instead of repainting the
-      // old "not set" snapshot immediately after Save.
-      setTimeout(() => load(true), 2500);
-      setTimeout(() => load(true), 7000);
-      setTimeout(() => load(true), 13000);
-    }
+    if (ok) webhookDrafts[key] = url;
     return;
   }
 
@@ -2016,7 +2153,7 @@ function stageEdit(path, value, serverValue) {
 }
 
 async function saveConfig() {
-  const settings = ((data.snapshot || {}).config || {}).settings || {};
+  const settings = (((serverData || data).snapshot || {}).config || {}).settings || {};
   const paths = Object.keys(configEdits);
   if (!paths.length) return;
 
@@ -2028,27 +2165,37 @@ async function saveConfig() {
   for (const path of paths) {
     const setting = settings[path];
     if (!setting) { refused.push(path + ' (no longer exists)'); continue; }
-    const result = await api('/servers/' + SERVER + '/commands', {
-      type: 'setting', path, value: configEdits[path], expected: setting.value,
-    });
-    if (result.ok) queued += 1;
-    else refused.push(path + ' — ' + result.error);
+    const value = configEdits[path];
+    const ok = await send({ type: 'setting', path, value, expected: setting.value }, path);
+    if (ok) { queued += 1; delete configEdits[path]; delete fieldDrafts[path]; }
+    else refused.push(path + ' was not queued');
   }
-
-  configEdits = {};
   note(msg, refused.length
-    ? queued + ' update(s) sent, ' + refused.length + ' refused: ' + refused[0]
-    : queued + ' update(s) sent successfully. Waiting for live confirmation from the server…',
-    refused.length ? 'bad' : 'good');
+    ? queued + ' queued, ' + refused.length + ' refused: ' + refused[0]
+    : queued + ' update(s) queued. Waiting for server confirmation.',
+    refused.length ? 'bad' : 'warning');
   // Two reloads: the first catches the command being collected, the second the
   // result coming back on the sync after that. Without the second, the panel
   // would sit on "Delivered" until something else triggered a refresh.
   setTimeout(() => load(true), 800);
   setTimeout(() => load(true), 2200);
+  if (serverData) data = { ...serverData, snapshot: displaySnapshot(serverData.snapshot) };
   render();
 }
 
 document.addEventListener('change', async (event) => {
+  const protectionForm = event.target.closest('#protection-form');
+  if (protectionForm && event.target.name) {
+    const id = protectionForm.dataset.protectionId;
+    protectionDrafts[id] = {
+      enabled: protectionForm.elements.enabled.checked,
+      profile: protectionForm.elements.profile.value,
+      action: protectionForm.elements.action.value,
+      minConfidence: Number(protectionForm.elements.minConfidence.value),
+      screenshot: protectionForm.elements.screenshot.checked,
+      discord: protectionForm.elements.discord.checked,
+    };
+  }
   const plFilter = { 'pl-status': 'status', 'pl-risk': 'risk', 'pl-life': 'life', 'pl-sort': 'sort' }[event.target.id];
   if (plFilter) {
     pl[plFilter] = event.target.value;
@@ -2119,6 +2266,7 @@ document.addEventListener('change', async (event) => {
       }
     }
     stageEdit(path, value, current.value);
+    delete fieldDrafts[path];
     // Repaint only the row's staged marker and the Save button, so a field being
     // typed into is never torn out from under the caret.
     const row = target.closest('.cfg-row');
@@ -2129,6 +2277,14 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {
+    const form = event.target.closest('#protection-form');
+    protectionDrafts[form.dataset.protectionId] = {
+      ...(protectionDrafts[form.dataset.protectionId] || {}), minConfidence: Number(event.target.value) };
+  }
+  if (event.target.dataset.wh) webhookDrafts[event.target.dataset.wh] = event.target.value;
+  if (event.target.dataset.cfg && event.target.dataset.kind !== 'boolean')
+    fieldDrafts[event.target.dataset.cfg] = event.target.value;
   if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {
     const output = document.getElementById('pc-confidence');
     if (output) output.textContent = event.target.value + '%';
@@ -2148,7 +2304,7 @@ document.addEventListener('submit', async (event) => {
   const button = form.querySelector('[type="submit"]');
   button.disabled = true;
   const ok = await send(value, p.name);
-  if (ok) { openProtection = null; setTimeout(() => load(true), 2200); }
+  if (ok) setTimeout(() => load(true), 2200);
   else button.disabled = false;
 });
 

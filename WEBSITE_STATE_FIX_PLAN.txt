@@ -1,0 +1,16 @@
+Dashboard state and persistence fix (2026-09-27)
+
+1. Keep the resource snapshot separate from temporary user intent. Key each
+   pending configuration command by setting/module/channel. Render the desired
+   value immediately, then reconcile only when the bridge reports success and
+   the server snapshot contains the value. On refusal/expiry, surface the
+   error and restore the server value. Never call queued work saved.
+2. Keep unsaved input drafts through heartbeat renders. Keep a webhook URL
+   draft until acknowledgement, but only return a non-secret masked destination
+   from the resource for already-configured channels.
+3. Persist explicit webhook clears and check the actual SaveResourceFile return
+   value. Roll back live config and history when a write fails; show persistence
+   health and command outcomes on the dashboard.
+4. Run the resource tests, website syntax checks, and focused regression tests.
+   Commit/push the website changes and copy the resource changes locally. No
+   live acknowledgement or restart claim without a running FXServer/bridge.
