@@ -83,6 +83,7 @@ let live = true;
 let data = null;
 let serverData = null;
 let lastSignature = '';
+let lastSendError = '';
 const pendingChanges = new Map();
 const webhookDrafts = {};
 const fieldDrafts = {};
@@ -629,31 +630,34 @@ function viewDetectors() {
       '</section>').join('');
     const active = protections.find((p) => p.id === openProtection);
     const selected = active && { ...active, ...(protectionDrafts[active.id] || {}) };
+    const protectionSaving = active && pending('protection:' + active.id);
     const drawer = active ? '<div class="pc-shade" data-protection-close></div><aside class="pc-drawer" role="dialog" aria-label="' +
       escapeHtml(active.name) + ' settings"><header><span class="eyebrow">NEXUSAC / ' + escapeHtml(data.name || 'SERVER') +
       '</span><button data-protection-close aria-label="Close">×</button><h2>' + escapeHtml(active.name) +
       '</h2></header><form id="protection-form" data-protection-id="' + escapeHtml(active.id) + '">' +
       '<label class="pc-check">Protection enabled <input name="enabled" type="checkbox"' +
-      (selected.enabled ? ' checked' : '') + '></label>' +
+      (selected.enabled ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<label>Detector mode <select data-detector="' + escapeHtml(active.id) +
       '" data-expected="' + escapeHtml(active.mode || 'enforce') + '"' +
-      (!editable || active.locked ? ' disabled' : '') + '>' +
+      (!editable || active.locked || protectionSaving || pending('detector:' + active.id) ? ' disabled' : '') + '>' +
       ['disabled', 'observe', 'enforce'].map((v) => '<option value="' + v + '"' +
       (active.mode === v ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) +
       '</option>').join('') + '</select></label>' +
-      '<label>Detection profile<select name="profile">' + ['relaxed', 'balanced', 'strict'].map((v) =>
+      '<label>Detection profile<select name="profile"' + (protectionSaving ? ' disabled' : '') + '>' +
+      ['relaxed', 'balanced', 'strict'].map((v) =>
         '<option value="' + v + '"' + (selected.profile === v ? ' selected' : '') + '>' +
         v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
-      '<label>Enforcement<select name="action">' + ['log', 'kick', 'ban'].map((v) =>
+      '<label>Enforcement<select name="action"' + (protectionSaving ? ' disabled' : '') + '>' +
+      ['log', 'kick', 'ban'].map((v) =>
         '<option value="' + v + '"' + (selected.action === v ? ' selected' : '') + '>' +
         v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
       '<label>Minimum confidence <output id="pc-confidence">' + num(selected.minConfidence) + '%</output>' +
       '<input name="minConfidence" type="range" min="50" max="100" value="' +
-      num(selected.minConfidence) + '"></label>' +
+      num(selected.minConfidence) + '"' + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<label class="pc-check">Evidence screenshot <input name="screenshot" type="checkbox"' +
-      (selected.screenshot ? ' checked' : '') + '></label>' +
+      (selected.screenshot ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<label class="pc-check">Discord notification <input name="discord" type="checkbox"' +
-      (selected.discord ? ' checked' : '') + '></label>' +
+      (selected.discord ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<p class="pc-note">' + escapeHtml(active.info || '') +
       (active.evidenceLevel >= 3 ? ' This module relies heavily on client-side evidence; use Ban only after calibration.' : '') +
       ' Changes apply live and are saved to the server. Global Observe mode records findings without enforcement.</p>' +
@@ -1767,6 +1771,7 @@ async function send(body, label) {
     render();
   }
   const result = await api('/servers/' + SERVER + '/commands', body);
+  lastSendError = result.ok ? '' : result.error;
   if (key && result.ok) pendingChanges.get(key).id = result.data.id;
   if (key && !result.ok) {
     pendingChanges.delete(key);
@@ -2168,7 +2173,7 @@ async function saveConfig() {
     const value = configEdits[path];
     const ok = await send({ type: 'setting', path, value, expected: setting.value }, path);
     if (ok) { queued += 1; delete configEdits[path]; delete fieldDrafts[path]; }
-    else refused.push(path + ' was not queued');
+    else refused.push(path + ' — ' + (lastSendError || 'was not queued'));
   }
   note(msg, refused.length
     ? queued + ' queued, ' + refused.length + ' refused: ' + refused[0]
