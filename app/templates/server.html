@@ -247,6 +247,10 @@ function viewOverview() {
     kpi('ban', 'Entities Denied', num(ents.denied), num(ents.created) + ' created') +
     kpi('clock', 'Uptime', o.uptime ? duration(o.uptime) : '—', 'Since the resource started') +
     '</div>';
+  const quick = '<div class="ov-quick">' +
+    '<button class="button small" data-goto="Detectors">Protection modules</button>' +
+    '<button class="button small" data-goto="Cleanup">Clear entities</button>' +
+    '<button class="button small" data-goto="Configuration">Configuration</button></div>';
 
   const infoRows = [
     ['sliders', 'Mode', '<span class="ov-chip">' + escapeHtml(o.mode || '—') + '</span>'],
@@ -310,7 +314,7 @@ function viewOverview() {
   const viewAll = (tabName) => '<button class="ov-link" data-goto="' + tabName + '">View all ' + icon('arrow-right', 14) + '</button>';
 
   mount(() => loadOverviewActivity(false));
-  return offlineNote() + hero + kpis +
+  return offlineNote() + hero + quick + kpis +
     '<div class="ov-row three">' +
       card('server', 'Server Information', '<ul class="ov-list info">' + infoRows + '</ul>') +
       card('bar-chart', 'Activity Overview', '<div id="ov-activity">' + activityBody() + '</div>', windowSelect) +
