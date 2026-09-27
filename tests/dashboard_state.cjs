@@ -10,7 +10,8 @@ assert.ok(state.startsWith('const pendingChanges ='));
 const checks = `
 const snap = (revision, enabled, direct) => ({
   config: { persistence: { revision, verified: true, dirty: false },
-    settings: { 'test.enabled': { value: enabled } } },
+    settings: { 'test.enabled': { value: enabled } },
+    kinds: [{ kind: 'entity_rate', action: 'risk' }] },
   integrations: { webhooks: [{ category: 'bans', configuredDirect: direct }] },
   protections: [], detectors: [],
 });
@@ -31,6 +32,15 @@ showServerData(fresh(snap(2, false, true), [{ id: 'two', status: 'pending' }]));
 assert.equal(data.snapshot.integrations.webhooks[0].configuredDirect, false);
 showServerData(fresh(snap(3, false, false), [{ id: 'two', status: 'succeeded' }]));
 assert.equal(pendingChanges.has('webhook:bans'), false);
+const punish = { type: 'punish', signal: 'entity_rate', action: 'kick' };
+pendingChanges.set('punish:entity_rate', { id: 'policy', body: punish,
+  label: 'Entity rate', at: Date.now(), revision: 3 });
+showServerData(fresh(snap(3, false, false), [{ id: 'policy', status: 'pending' }]));
+assert.equal(data.snapshot.config.kinds[0].action, 'kick', 'policy choice survives stale poll');
+const updated = snap(4, false, false);
+updated.config.kinds[0].action = 'kick';
+showServerData(fresh(updated, [{ id: 'policy', status: 'succeeded' }]));
+assert.equal(pendingChanges.has('punish:entity_rate'), false);
 pendingChanges.set('setting:test.enabled', { id: 'three', body: setting, label: 'Test', at: Date.now(), revision: 3 });
 showServerData(fresh(snap(3, true, false), [{ id: 'three', status: 'failed', result: 'disk full' }]));
 assert.equal(pendingChanges.has('setting:test.enabled'), false);

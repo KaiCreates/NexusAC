@@ -93,6 +93,7 @@ function changeKey(body) {
   if (body.type === 'setting') return 'setting:' + body.path;
   if (body.type === 'detector') return 'detector:' + body.detector;
   if (body.type === 'protection') return 'protection:' + body.id;
+  if (body.type === 'punish') return 'punish:' + body.signal;
   if (body.type === 'webhook') return 'webhook:' + body.category;
   return null;
 }
@@ -109,6 +110,9 @@ function confirmed(snap, body, baselineRevision) {
     return (snap.protections || []).some((p) => p.id === body.id &&
       ['enabled', 'profile', 'action', 'minConfidence', 'screenshot', 'discord']
         .every((field) => p[field] === body[field]));
+  if (body.type === 'punish')
+    return (((snap.config || {}).kinds || []).some(
+      (row) => row.kind === body.signal && row.action === body.action));
   if (body.type === 'webhook') {
     const channel = (((snap.integrations || {}).webhooks) || [])
       .find((p) => p.category === body.category);
@@ -129,10 +133,16 @@ function displaySnapshot(source) {
       const detector = (snap.detectors || []).find((p) => p.id === body.detector);
       if (detector) detector.mode = body.mode;
       const protection = (snap.protections || []).find((p) => p.id === body.detector);
-      if (protection) protection.mode = body.mode;
+      if (protection) {
+        protection.mode = body.mode;
+        protection.enabled = body.mode !== 'disabled';
+      }
     } else if (body.type === 'protection') {
       const protection = (snap.protections || []).find((p) => p.id === body.id);
       if (protection) Object.assign(protection, protectionFields(body));
+    } else if (body.type === 'punish') {
+      const row = (((snap.config || {}).kinds) || []).find((p) => p.kind === body.signal);
+      if (row) row.action = body.action;
     } else if (body.type === 'webhook') {
       const channel = (((snap.integrations || {}).webhooks) || [])
         .find((p) => p.category === body.category);
@@ -660,6 +670,7 @@ function viewDetectors() {
       (selected.discord ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<p class="pc-note">' + escapeHtml(active.info || '') +
       (active.evidenceLevel >= 3 ? ' This module relies heavily on client-side evidence; use Ban only after calibration.' : '') +
+      (active.id === 'NX-ENTITY-002' ? ' The vehicle/prop rate limiter has a separate Kick entity spammers switch in Configuration → Entity; that threshold kick is independent of this signal action.' : '') +
       ' Changes apply live and are saved to the server. Global Observe mode records findings without enforcement.</p>' +
       '<button class="button light" type="submit"' +
       (!editable || active.locked || pending('protection:' + active.id) ? ' disabled' : '') +
@@ -670,8 +681,9 @@ function viewDetectors() {
       '" data-global-mode="observe"' + (!editable || mode === 'observe' || pending('setting:general.mode') ? ' disabled' : '') +
       '>Observe</button><button class="button small ' + (mode === 'enforce' ? 'light' : '') +
       '" data-global-mode="enforce"' + (!editable || mode === 'enforce' || pending('setting:general.mode') ? ' disabled' : '') +
-      '>Enforce</button></div></div><div class="pc-grid">' + cards + '</div>' + drawer +
-      commandLog();
+      '>Enforce</button><button class="button small" type="button" data-punish-toggle>' +
+      'Signal actions</button></div></div><div class="pc-grid">' + cards + '</div>' + drawer +
+      viewPunishments() + commandLog();
   }
   const editable = ['owner', 'administrator'].includes(data.role);
   const modeSetting = (((snap.config || {}).settings || {})['general.mode']);
@@ -719,40 +731,36 @@ function viewDetectors() {
     viewPunishments() + commandLog();
 }
 
-/* Per-signal enforcement.
-
-   `risk` hands the finding to the correlation engine, which needs independent
-   evidence from several detector families before it kicks or bans. Any other
-   value is a verdict on a single detection.
-
-   That difference is the whole reason false positives are survivable, so the
-   table says it plainly rather than presenting five equivalent-looking options.
-   Setting a noisy signal to `ban` does not make the anti-cheat stricter, it
-   makes every false reading a ban. */
+/* Advanced per-signal refinements of the 2.0 module action. The module's
+   confidence gate and global/detector mode still apply. */
 const PUNISH_ACTIONS = ['none', 'log', 'risk', 'kick', 'ban'];
+let advancedPunishOpen = false;
 const PUNISH_NOTE = {
-  none: 'Ignored entirely.',
-  log:  'Recorded only. No score, no action.',
-  risk: 'Scored, and correlated with other findings before anything happens.',
-  kick: 'Kicks on a single detection.',
-  ban:  'Bans on a single detection.',
+  none: 'No policy decision; the signal remains in the activity log.',
+  log:  'Evidence only; never an automatic kick or ban.',
+  risk: 'Use the module action and its confidence threshold.',
+  kick: 'Kick when this signal meets the module confidence threshold.',
+  ban:  'Ban when this signal meets the module confidence threshold.',
+};
+const LEGACY_PUNISH_NOTE = {
+  none: 'Ignored entirely.', log: 'Recorded only.',
+  risk: 'Use legacy risk correlation.', kick: 'Kick on one finding.', ban: 'Ban on one finding.',
 };
 
 function viewPunishments() {
   const snap = data.snapshot || {};
+  const modern = !!(snap.protections || []).length;
   const kinds = ((snap.config || {}).kinds) || [];
   if (!kinds.length) return '';
 
   const editable = ['owner', 'administrator'].includes(data.role) && data.online;
-  const search = (configSearch || '').toLowerCase();
-
   const rows = kinds
-    .filter((k) => !search || k.kind.toLowerCase().includes(search))
     .map((k) => {
       const action = k.action || 'risk';
       const control = editable
         ? '<select data-punish="' + escapeHtml(k.kind) + '" data-expected="' +
-          escapeHtml(action) + '">' + PUNISH_ACTIONS.map((option) =>
+          escapeHtml(action) + '"' + (pending('punish:' + k.kind) ? ' disabled' : '') + '>' +
+          PUNISH_ACTIONS.map((option) =>
             '<option value="' + option + '"' + (option === action ? ' selected' : '') + '>' +
             option + '</option>').join('') + '</select>'
         : '<span class="badge' + (action === 'ban' ? ' danger' : action === 'risk' ? '' : ' warning') +
@@ -762,23 +770,28 @@ function viewPunishments() {
         '<td class="muted">' + escapeHtml(k.label || '') + '</td>' +
         '<td class="mono">' + num(k.weight) + '</td>' +
         '<td>' + control + '</td>' +
-        '<td class="muted">' + escapeHtml(PUNISH_NOTE[action] || '') + '</td></tr>';
+        '<td class="muted">' + escapeHtml((modern ? PUNISH_NOTE : LEGACY_PUNISH_NOTE)[action] || '') + '</td></tr>';
     });
 
   const instant = kinds.filter((k) => k.action === 'ban' || k.action === 'kick').length;
 
-  return panel('Per-signal enforcement',
+  return '<div class="pc-advanced"><button class="button small" type="button" data-punish-toggle ' +
+    'aria-expanded="' + advancedPunishOpen + '">' +
+    (advancedPunishOpen ? 'Hide' : 'Show') + ' advanced per-signal actions (' + kinds.length + ')</button>' +
+    (advancedPunishOpen ? panel('Advanced per-signal actions',
     '<p class="panel-note">' +
-      'On <b>risk</b>, a finding is scored and has to be corroborated by other ' +
-      'detector families before anyone is kicked or banned — that buffer is what ' +
-      'absorbs a single bad reading. Set a signal to <b>kick</b> or <b>ban</b> and ' +
-      'one detection is the whole verdict, including a wrong one.' +
+      (modern
+        ? '<b>Risk</b> uses the module’s action and confidence threshold. A signal-specific ' +
+          '<b>kick</b> or <b>ban</b> overrides that action but still requires the confidence ' +
+          'threshold and never bypasses Observe or Disabled mode. Use these overrides sparingly.'
+        : '<b>Risk</b> uses legacy correlation. Kick and ban are immediate on one finding; ' +
+          'update the resource for the safer 2.0 confidence policy.') +
     '</p>' +
     table(['Signal', 'Meaning', 'Weight', 'On one detection', 'Effect'], rows,
       'No signals reported', 'The server sends its signal list with the configuration.'),
     instant
-      ? '<span class="badge danger">' + instant + ' instant</span>'
-      : '<span class="badge">all correlated</span>');
+      ? '<span class="badge danger">' + instant + ' overrides</span>'
+      : '<span class="badge">module policy</span>') : '') + '</div>';
 }
 
 function viewBans() {
@@ -1813,6 +1826,12 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  if (event.target.closest('[data-punish-toggle]')) {
+    advancedPunishOpen = !advancedPunishOpen;
+    render();
+    if (advancedPunishOpen) document.querySelector('.pc-advanced')?.scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
   const settingOpen = event.target.closest('[data-setting-open]');
   if (settingOpen) { openSetting = settingOpen.dataset.settingOpen; return render(); }
   if (event.target.closest('[data-setting-close]')) { openSetting = null; return render(); }
@@ -2237,12 +2256,11 @@ document.addEventListener('change', async (event) => {
   if (signal) {
     const action = target.value;
     const was = target.dataset.expected;
-    // Moving a signal onto an instant verdict is asked about once. Everything
-    // else applies straight away, including moving one back to risk.
+    // Escalating one signal is high impact, even though confidence still gates it.
     if ((action === 'ban' || action === 'kick') &&
         !confirm('Set "' + signal + '" to ' + action + ' on a single detection?\n\n' +
-                 'This removes the correlation buffer for this signal: one reading, ' +
-                 'including a wrong one, becomes the whole verdict.')) {
+                 'The module confidence threshold still applies, but a wrong high-confidence ' +
+                 'reading could punish a legitimate player.')) {
       target.value = was;
       return;
     }

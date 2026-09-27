@@ -290,11 +290,10 @@ class WebhookCommand(BaseModel):
 
 
 class PunishCommand(BaseModel):
-    """What ONE detection of a signal kind does on its own.
+    """Override one 2.0 signal's module action without bypassing confidence.
 
-    'risk' is the default and hands the finding to the correlation engine.
-    Anything else is an immediate verdict on a single detection, which is why
-    the resource ships almost everything on 'risk'.
+    'risk' uses the module's configured action and confidence policy; it no
+    longer means cross-family risk correlation. Observe/Disabled still win.
     """
     model_config = ConfigDict(extra="forbid")
     type: Literal["punish"]

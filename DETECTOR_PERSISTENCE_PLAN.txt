@@ -1,0 +1,4 @@
+Website side of the detector persistence work is planned in the installed
+resource's DETECTOR_PERSISTENCE_PLAN.txt. This file records that the website
+commit must include pending-state reconciliation and 2.0 action labels, with
+the resource tests passing before push.
