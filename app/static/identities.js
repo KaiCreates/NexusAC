@@ -26,6 +26,26 @@ const KIND_STYLE = {
   device:   { label: 'Device',   short: 'H', colour: '#2fb2a4' },
   name:     { label: 'Name',     short: 'N', colour: '#6b6b73' },
 };
+const BRAND_ICONS = {
+  discord: '/static/brand/discord.svg',
+  steam: '/static/brand/steam.svg',
+  fivem: '/static/brand/fivem.svg',
+};
+const KIND_GLYPHS = { license: 'key', license2: 'key', ip: 'server', device: 'shield-check', token: 'key' };
+
+function identifierIcon(kind) {
+  const brand = BRAND_ICONS[kind];
+  if (brand) return '<img class="id-platform-icon" src="' + brand + '" alt="">';
+  return '<span class="id-platform-glyph" aria-hidden="true">' + icon(KIND_GLYPHS[kind] || 'server', 14) + '</span>';
+}
+
+function identifierValue(kind, value, compact) {
+  if (!value) return '—';
+  const full = String(value);
+  const shown = compact && full.length > 24 ? full.slice(0, 10) + '…' + full.slice(-8) : full;
+  return '<span class="id-live-id" title="' + escapeHtml(full) + '">' + identifierIcon(kind) +
+    '<code>' + escapeHtml(shown) + '</code></span>';
+}
 
 const state = {
   mode: 'search',
@@ -151,27 +171,27 @@ function renderOnlinePlayers() {
   const byKind = (player, kinds) => {
     const net = player.network || {};
     const entry = (net.identifiers || []).find((item) => kinds.includes(item.kind));
-    return entry ? escapeHtml(entry.value) : '—';
+    return entry ? entry.value : '';
   };
-  const shortId = (value) => value && value.length > 24 ? value.slice(0, 10) + '…' + value.slice(-8) : value;
   el('id-live-rows').innerHTML = players.length ? players.map((player) => {
     const license = byKind(player, ['license2', 'license']);
-    const licenseCell = license === '—' ? license : '<span title="' + license + '">' + shortId(license) + '</span>';
     const net = player.network || {};
     const identity = (net.identifiers || []).find((item) => item.kind === 'discord');
-    const discord = identity ? escapeHtml(identity.value) : '—';
+    const discord = identity ? identity.value : '';
     const steam = byKind(player, ['steam']);
     const fivem = byKind(player, ['fivem']);
     const device = byKind(player, ['device']);
     const otherIds = (net.identifiers || []).filter((entry) =>
       !['discord', 'steam', 'fivem', 'license', 'license2', 'device'].includes(entry.kind)
-    ).map((entry) => escapeHtml(entry.kind + ':' + shortId(entry.value || ''))).join('<br>') || '—';
+    ).map((entry) => '<span class="id-live-id"><span class="id-live-kind">' + escapeHtml(entry.kind) +
+      '</span>' + identifierIcon(entry.kind) + '<code>' + escapeHtml(String(entry.value || '').slice(0, 24)) + '</code></span>').join('') || '—';
     return '<tr><td><b>' + escapeHtml(player.name || 'Unknown') + '</b><small class="muted">ID ' +
       escapeHtml(player.src == null ? '—' : player.src) + (player.risk ? ' · risk ' + escapeHtml(player.risk) : '') + '</small></td>' +
-      '<td>' + escapeHtml(player.server || '—') + '</td><td class="mono">' + discord + '</td>' +
-      '<td class="mono">' + steam + '</td><td class="mono">' + fivem + '</td><td class="mono">' + licenseCell + '</td>' +
-      '<td class="mono">' + device + '</td><td class="mono">' + otherIds + '</td>' +
-      '<td class="mono">' + escapeHtml(net.ip || '—') + '</td><td>' + escapeHtml(player.ping == null ? '—' : player.ping + ' ms') + '</td>' +
+      '<td>' + escapeHtml(player.server || '—') + '</td><td>' + identifierValue('discord', discord) + '</td>' +
+      '<td>' + identifierValue('steam', steam) + '</td><td>' + identifierValue('fivem', fivem) + '</td>' +
+      '<td>' + identifierValue('license', license, true) + '</td><td>' + identifierValue('device', device, true) + '</td>' +
+      '<td class="id-live-other">' + otherIds + '</td><td>' + identifierValue('ip', net.ip, true) + '</td>' +
+      '<td>' + escapeHtml(player.ping == null ? '—' : player.ping + ' ms') + '</td>' +
       '<td>' + escapeHtml(formatSession(player.sessionAge)) + '</td></tr>';
   }).join('') : '<tr><td colspan="11" class="muted">' +
     (state.onlinePlayers.length ? 'No live players match this search.' : 'No players are connected to an online server.') + '</td></tr>';
@@ -236,7 +256,8 @@ function card(row) {
     row.kinds[kind].forEach((value) => {
       badges.push(
         '<span class="id-badge" style="--badge:' + style.colour + '" ' +
-        'title="' + escapeHtml(style.label + ': ' + value) + '">' + style.short + '</span>'
+        'title="' + escapeHtml(style.label + ': ' + value) + '">' +
+        (BRAND_ICONS[kind] ? '<img src="' + BRAND_ICONS[kind] + '" alt="">' : style.short) + '</span>'
       );
     });
   });
@@ -354,7 +375,8 @@ async function showDetail(uid) {
       const style = KIND_STYLE[kind] || { label: kind, colour: '#6b6b73' };
       return '<section class="id-marks">' +
         '<h4><span class="id-badge" style="--badge:' + style.colour + '">' +
-          (style.short || '?') + '</span>' + escapeHtml(style.label) + '</h4>' +
+          (BRAND_ICONS[kind] ? '<img src="' + BRAND_ICONS[kind] + '" alt="">' : (style.short || '?')) +
+          '</span>' + escapeHtml(style.label) + '</h4>' +
         groups[kind].map((mark) =>
           '<div class="id-mark"><code>' + escapeHtml(mark.value) + '</code>' +
           '<span class="muted">seen ' + mark.seen + '× · last ' + ago(mark.lastSeen) + '</span></div>'

@@ -3801,6 +3801,17 @@ table td .muted { font-size: 11px; }
 .id-live-table td:first-child { min-width: 150px; }
 .id-live-table td:first-child small { display: block; margin-top: 4px; }
 .id-live-table .mono { font-family: ui-monospace, Consolas, monospace; }
+.id-live-label { display: inline-flex; align-items: center; gap: 7px; }
+.id-live-label img { width: 15px; height: 15px; object-fit: contain; }
+.id-live-label svg { width: 14px; height: 14px; color: #aeb0b5; }
+.id-live-id { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.id-platform-icon { width: 16px; height: 16px; flex: 0 0 16px; object-fit: contain; }
+.id-platform-glyph { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: 0 0 16px; color: #aeb0b5; }
+.id-platform-glyph svg { width: 14px; height: 14px; }
+.id-live-id code { font: inherit; }
+.id-live-kind { color: var(--muted); font: 10px ui-monospace, Consolas, monospace; text-transform: uppercase; }
+.id-live-other .id-live-id { margin: 2px 0; }
+.id-badge img { width: 15px; height: 15px; object-fit: contain; filter: brightness(0) invert(1); }
 .id-live-note { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 11px; }
 @media (max-width: 700px) { .id-live-head { align-items: flex-start; flex-direction: column; } }
 

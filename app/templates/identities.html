@@ -46,8 +46,15 @@
         </div>
         <div class="table-scroll id-live-table-wrap">
           <table class="id-live-table"><thead><tr>
-            <th>Player</th><th>Server</th><th>Discord</th><th>Steam</th><th>FiveM</th>
-            <th>License</th><th>Device</th><th>Other IDs</th><th>IP</th><th>Ping</th><th>Session</th>
+            <th>Player</th><th>Server</th>
+            <th><span class="id-live-label"><img src="/static/brand/discord.svg" alt="">Discord</span></th>
+            <th><span class="id-live-label"><img src="/static/brand/steam.svg" alt="">Steam</span></th>
+            <th><span class="id-live-label"><img src="/static/brand/fivem.svg" alt="">FiveM</span></th>
+            <th><span class="id-live-label">{{ ui.icon('key', 14) }}License</span></th>
+            <th><span class="id-live-label">{{ ui.icon('shield-check', 14) }}Device</span></th>
+            <th>Other IDs</th>
+            <th><span class="id-live-label">{{ ui.icon('server', 14) }}IP</span></th>
+            <th>Ping</th><th>Session</th>
           </tr></thead><tbody id="id-live-rows"></tbody></table>
         </div>
         <p class="id-live-note muted">The table refreshes automatically. IP/device fields are opt-in per server; CFX tokens are never sent to the website.</p>
