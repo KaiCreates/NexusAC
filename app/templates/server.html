@@ -513,6 +513,15 @@ function viewDetections() {
 function viewDetectors() {
   const snap = data.snapshot || {};
   const editable = ['owner', 'administrator'].includes(data.role);
+  const modeSetting = (((snap.config || {}).settings || {})['general.mode']);
+  const globalMode = (modeSetting && modeSetting.value) || (snap.overview || {}).mode || 'observe';
+  const globalControl = editable && data.online && modeSetting
+    ? '<div class="button-row">' + ['observe', 'enforce'].map((mode) =>
+        '<button class="button small ' + (globalMode === mode ? 'light' : '') + '" data-global-mode="' +
+        mode + '"' + (globalMode === mode ? ' disabled' : '') + '>' +
+        (mode === 'observe' ? 'Observe only' : 'Enforce protection') + '</button>').join('') + '</div>'
+    : '<span class="badge ' + (globalMode === 'enforce' ? 'success' : 'warning') + '">' +
+      escapeHtml(globalMode) + '</span>';
   const rows = (snap.detectors || []).map((detector) => {
     const mode = detector.mode || (detector.active ? 'enforce' : 'disabled');
     const control = detector.locked
@@ -534,7 +543,14 @@ function viewDetectors() {
       '<td class="muted">' + escapeHtml(detector.enforcement || '—') + '</td>' +
       '<td class="muted">' + escapeHtml(stats || '—') + '</td></tr>';
   });
-  return offlineNote() + panel('Detectors',
+  return offlineNote() + panel('Global operating mode',
+    '<div class="cfg-row"><div class="cfg-label"><b>' +
+      (globalMode === 'enforce' ? 'Protection is enforcing' : 'Protection is observing') +
+      '</b><small>Observe records evidence without automatic enforcement. Enforce applies the configured actions. ' +
+      'This choice is verified on disk and survives resource and server restarts.</small></div>' +
+      '<div class="cfg-control">' + globalControl + '</div></div>',
+    '<span class="badge ' + (globalMode === 'enforce' ? 'success' : 'warning') + '">' +
+      escapeHtml(globalMode) + '</span>') + panel('Detectors',
     table(['Detector', 'Maturity', 'Mode', 'Enforcement', 'Counters'], rows,
       'No detectors reported', 'The server sends its detector list with every snapshot.'),
     '<span class="badge">' + (snap.detectors || []).length + '</span>') +
@@ -730,7 +746,23 @@ function viewActivity() {
       '<td class="muted mono">' + escapeHtml(short(data, 52) || '—') + '</td></tr>';
   });
 
+  const website = (((data.snapshot || {}).integrations || {}).website) || {};
+  const mirrorHealthy = data.online && website.connected && !website.degraded;
+  const storagePanel = panel('Event storage health',
+    '<div class="cfg-row"><div class="cfg-label"><b>' +
+      (mirrorHealthy ? 'Events are being stored' : 'Event storage needs attention') +
+      '</b><small>' + (website.degraded
+        ? 'The website reported a degraded mirror: ' + escapeHtml(website.degraded) +
+          '. Pending event batches are retained and retried instead of discarded.'
+        : website.connected
+          ? 'The authenticated server bridge is connected. Cursor ' + num(website.eventCursor) + '.'
+          : 'The website bridge is disconnected; events remain queued in the resource ring until it reconnects.') +
+      '</small></div><div class="cfg-control"><span class="badge ' +
+      (mirrorHealthy ? 'success' : 'warning') + '">' +
+      (mirrorHealthy ? 'storing' : 'retrying') + '</span></div></div>');
+
   return offlineNote() +
+    storagePanel +
     '<div class="rs-bar">' +
     '<label class="search-field"><input id="act-q" placeholder="Search names, or event_type:playerConnecting" ' +
       'value="' + escapeHtml(activityQuery) + '"></label>' +
@@ -1092,14 +1124,14 @@ function viewScreenshots() {
    firing one per keystroke would flood the queue. */
 
 const CONFIG_TABS = {
-  Core: ['general', 'risk', 'heartbeat', 'panel'],
+  Core: ['general', 'risk', 'heartbeat', 'panel', 'eventlog'],
   Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
               'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
               'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing',
               // These eight were mapped to no tab at all, so they collected in
               // "Other" -- eight real detectors sitting in a bucket nobody
               // thinks to open.
-              'armory', 'backdoor', 'ocr', 'playerstate', 'rpfblock', 'sensors', 'social'],
+              'armory', 'weapondamage', 'backdoor', 'ocr', 'playerstate', 'rpfblock', 'sensors', 'social'],
   Entity: ['vehicles', 'entitybehaviour'],
   Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
                 'honeypot', 'trust', 'txadmin', 'connect'],
@@ -1113,7 +1145,8 @@ const GROUP_ICONS = {
   log: 'log', honeypot: 'radar', panel: 'grid', griefing: 'ban', trust: 'shield-check',
   txadmin: 'server', targeting: 'scan-line', integrity: 'shield-check', lua: 'braces',
   armory: 'ban', backdoor: 'key', ocr: 'camera', playerstate: 'users',
-  rpfblock: 'lock', sensors: 'radar', social: 'users', connect: 'plug',
+  weapondamage: 'scan-line', eventlog: 'log', rpfblock: 'lock', sensors: 'radar',
+  social: 'users', connect: 'plug',
 };
 
 let configEdits = {};
@@ -1231,6 +1264,28 @@ function viewConfig() {
   const tabs = ['All'].concat(Object.keys(CONFIG_TABS))
     .concat(paths.some((p) => tabOf(groupOf(p)) === 'Other') ? ['Other'] : []);
   const dirty = Object.keys(configEdits).length;
+  const persistence = (snap.config || {}).persistence || {};
+  const healthy = persistence.loaded && persistence.verified && !persistence.dirty && !persistence.lastError;
+  const persistencePanel = panel('Configuration persistence',
+    '<div class="cfg-row"><div class="cfg-label"><b>' +
+      (healthy ? 'Saved settings are verified' : 'Configuration storage needs attention') +
+      '</b><small>Revision ' + num(persistence.revision) +
+      (persistence.lastSave ? ' · last saved ' + escapeHtml(ago(persistence.lastSave, data.serverTime)) : '') +
+      ' · ' + num(persistence.applied) + ' values restored at startup' +
+      (persistence.dropped ? ' · ' + num(persistence.dropped) + ' obsolete values ignored' : '') +
+      (persistence.lastError ? ' · ' + escapeHtml(persistence.lastError) : '') +
+      '</small></div><div class="cfg-control"><span class="badge ' +
+      (healthy ? 'success' : 'danger') + '">' + (healthy ? 'verified' : 'not verified') +
+      '</span></div></div>');
+
+  const historyRows = ((snap.config || {}).history || []).slice().reverse().slice(0, 12).map((item) =>
+    '<tr><td class="muted">' + escapeHtml(ago(item.at, data.serverTime)) + '</td>' +
+    '<td class="mono">' + escapeHtml(item.path || '—') + '</td><td>' +
+    escapeHtml(String(item.from)) + ' → ' + escapeHtml(String(item.to)) + '</td>' +
+    '<td class="muted">' + escapeHtml(item.by || 'server') + '</td></tr>');
+  const historyPanel = panel('Recent configuration changes',
+    table(['When', 'Setting', 'Change', 'By'], historyRows,
+      'No configuration changes yet', 'Changes made in game or from this website will appear here.'));
 
   const header =
     '<div class="cfg-bar">' +
@@ -1285,8 +1340,9 @@ function viewConfig() {
       rows + '</section>';
   }).join('');
 
-  return offlineNote() + header + '<div class="cfg-grid">' + cards + '</div>' +
+  return offlineNote() + persistencePanel + header + '<div class="cfg-grid">' + cards + '</div>' +
     entityRulesCard(editable) +
+    historyPanel +
     commandLog() +
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>');
 }
@@ -1550,6 +1606,19 @@ document.addEventListener('click', async (event) => {
     live = !live;
     document.getElementById('livelabel').textContent = live ? 'Live' : 'Paused';
     document.getElementById('livedot').style.opacity = live ? '1' : '0.25';
+    return;
+  }
+
+  const globalModeButton = event.target.closest('[data-global-mode]');
+  if (globalModeButton && !globalModeButton.disabled) {
+    const settings = (((data.snapshot || {}).config || {}).settings) || {};
+    const setting = settings['general.mode'];
+    if (!setting) return note(msg, 'The server has not published its global mode setting.', 'bad');
+    const mode = globalModeButton.dataset.globalMode;
+    const ok = await send({ type: 'setting', path: 'general.mode', value: mode,
+                            expected: setting.value },
+                          mode === 'enforce' ? 'Enable enforcement' : 'Enable observe mode');
+    if (ok) setTimeout(() => load(true), 1200);
     return;
   }
 

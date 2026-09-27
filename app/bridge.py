@@ -323,6 +323,12 @@ async def _sync(request: Request, server: dict, server_id: str):
         "Server clock differs from the website by more than 90 seconds.",
     )
 
+    # A freshly deployed site may receive its first event batch before any UI
+    # request has triggered schema setup. Ensure migrations here, at the actual
+    # ingestion boundary, so the first batch is stored instead of being marked
+    # degraded and left invisible until somebody opens /events.
+    db.ensure_schema()
+
     snapshot = payload.snapshot.model_dump(mode="json")
     evidence = snapshot.pop("evidence", [])
     # Identities are mirrored into their own tables, not kept in the snapshot
