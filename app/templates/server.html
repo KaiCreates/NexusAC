@@ -428,8 +428,12 @@ function playerRows() {
   const t = (snap.overview || {}).thresholds || {};
   const q = pl.q.trim().toLowerCase();
   let rows = (snap.players || []).filter((p) => {
+    const networkText = ['owner', 'administrator'].includes(data.role)
+      ? ((p.network || {}).identifiers || []).map((entry) => (entry.kind || '') + ':' + (entry.value || '')).join(' ').toLowerCase()
+      : '';
     if (q && !(String(p.name || '').toLowerCase().includes(q) || String(p.src) === q ||
-               String(p.ped || '').toLowerCase().includes(q))) return false;
+               String(p.ped || '').toLowerCase().includes(q) || networkText.includes(q) ||
+               (['owner', 'administrator'].includes(data.role) && String((p.network || {}).ip || '').includes(q)))) return false;
     if (pl.status === 'live' && !p.live) return false;
     if (pl.status === 'quiet' && p.live) return false;
     if (pl.status === 'frozen' && !p.frozen) return false;
@@ -461,6 +465,7 @@ function playerPanel(p) {
   const can = ['owner', 'administrator', 'moderator'].includes(data.role) && data.online;
   const admin = ['owner', 'administrator'].includes(data.role);
   const tabs = [['overview', 'Overview'], ['detections', 'Detections'], ['evidence', 'Evidence']];
+  if (admin) tabs.push(['network', 'Network']);
   const row = (k, v) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>';
   let body = '';
   if (pl.tab === 'overview') {
@@ -482,6 +487,17 @@ function playerPanel(p) {
       row('Session', p.sessionAge != null ? duration(p.sessionAge) : '—') +
       (p.created != null ? row('Entities', num(p.created) + ' created · ' + num(p.denied) + ' denied') : '') +
       '</dl>';
+  } else if (pl.tab === 'network') {
+    const net = p.network || {};
+    const ids = Array.isArray(net.identifiers) ? net.identifiers : [];
+    const rows = ids.map((entry) => row(escapeHtml(entry.kind || 'Identifier'),
+      '<span class="mono">' + escapeHtml(entry.value || '') + '</span>'));
+    if (net.ip) rows.push(row('IP address', '<span class="mono">' + escapeHtml(net.ip) + '</span>'));
+    body = '<h4>' + icon('server', 16) + ' Live Network Identity</h4>' +
+      '<p class="muted">Refreshes with the live player snapshot. IP visibility is controlled by the server configuration.</p>' +
+      (rows.length ? '<dl class="pl-info">' + rows.join('') + '</dl>' :
+        '<div class="ov-empty"><b>No network identifiers available</b><span>Enable account identifiers in Configuration → IdentityGuard, then wait for the next server update.</span></div>') +
+      '<p class="muted pl-note">CFX player tokens are intentionally never sent to the website.</p>';
   } else if (pl.tab === 'detections') {
     const mine = (snap.feed || []).filter((e) => Number(e.src) === p.src);
     body = mine.length ? '<ul class="pl-feed">' + mine.map((e) =>
@@ -560,13 +576,16 @@ function viewPlayers() {
     '<td><span class="pl-ping ' + pingClass(p.ping) + '">' + num(p.ping) + ' ms</span></td>' +
     '<td class="muted">' + escapeHtml(p.lifecycle || '—') + '</td>' +
     '<td class="muted mono">' + escapeHtml(short(p.ped, 20)) + '</td>' +
+    '<td class="muted">' + (['owner', 'administrator'].includes(data.role)
+      ? escapeHtml((((p.network || {}).identifiers || []).map((entry) => entry.kind || '').join(' · ')) || '—')
+      : '—') + '</td>' +
     '<td>' + hpBar(p) + '</td>' +
     '<td>' + (p.live ? '<span class="ov-chip ok"><span class="status-dot"></span> live</span>' : '<span class="ov-chip dim">quiet</span>') + '</td>' +
     '<td class="muted">' + (p.sessionAge != null ? duration(p.sessionAge) : '—') + '</td>' +
     '<td class="pl-more"><button class="icon-button" data-player="' + p.src + '" aria-label="Open player">' + icon('chevron-right', 15) + '</button></td></tr>').join('');
   const table = rows.length
     ? '<div class="table-scroll"><table class="ov-table pl-table"><thead><tr><th>#</th><th>Player</th><th>Risk</th><th>Ping</th>' +
-      '<th>Lifecycle</th><th>Ped</th><th>HP / Armour</th><th>Client</th><th>Session</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>'
+      '<th>Lifecycle</th><th>Ped</th><th>Network IDs</th><th>HP / Armour</th><th>Client</th><th>Session</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>'
     : '<div class="ov-empty">' + icon('users', 22) + '<b>' + (all.length ? 'No players match these filters' : 'Nobody connected') + '</b>' +
       '<span>' + (all.length ? 'Clear a filter to see everyone.' : 'Players appear here as soon as they join.') + '</span></div>';
 
@@ -1340,6 +1359,10 @@ let banSelected = [];
 const PRETTY_CONFIG_NAMES = {
   rpfblock: 'RPF protection',
   signature: 'Blocked signatures',
+  includeIdentifiers: 'Share account identifiers with website',
+  includeIp: 'Share player IP addresses with website',
+  includeDevice: 'Share device markers with website',
+  discordRequired: 'Require a linked Discord account',
 };
 const prettyLabel = (part) => PRETTY_CONFIG_NAMES[part] || part
   .replace(/([a-z0-9])([A-Z])/g, '$1 $2')

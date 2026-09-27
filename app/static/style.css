@@ -3784,6 +3784,26 @@ table td .muted { font-size: 11px; }
 
 .id-hint { font-size: 13px; margin: 0 0 18px; }
 
+/* Live network roster at the top of Identities. */
+.id-live-panel { margin: 0 0 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
+.id-live-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 19px; border-bottom: 1px solid var(--border); }
+.id-live-head h2 { margin: 4px 0; font-size: 18px; font-weight: 600; }
+.id-live-head p { margin: 0; font-size: 12.5px; }
+.id-live-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.id-live-status .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #55bd83; box-shadow: 0 0 8px #55bd8355; }
+.id-live-status .id-tool { height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.id-live-table-wrap { max-height: 440px; overflow: auto; }
+.id-live-table { width: 100%; min-width: 1000px; border-collapse: collapse; text-align: left; }
+.id-live-table th { position: sticky; top: 0; z-index: 1; background: #171719; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.id-live-table th, .id-live-table td { padding: 11px 13px; border-bottom: 1px solid var(--border); }
+.id-live-table td { font-size: 12px; white-space: nowrap; }
+.id-live-table tbody tr:hover { background: #ffffff06; }
+.id-live-table td:first-child { min-width: 150px; }
+.id-live-table td:first-child small { display: block; margin-top: 4px; }
+.id-live-table .mono { font-family: ui-monospace, Consolas, monospace; }
+.id-live-note { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 11px; }
+@media (max-width: 700px) { .id-live-head { align-items: flex-start; flex-direction: column; } }
+
 /* ---- toolbar ---- */
 .id-toolbar {
   display: flex;

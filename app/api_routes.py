@@ -336,6 +336,8 @@ def _int_param(request: Request, name: str, default: int) -> int:
 @router.get("/identities")
 async def identity_search(request: Request):
     user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view network identity data.")
     rate(f"identities:{user['id']}", 120, 60)
     db.ensure_schema()
     return reply(
@@ -348,9 +350,42 @@ async def identity_search(request: Request):
     )
 
 
+@router.get("/identities/online")
+async def identities_online(request: Request):
+    """Live, workspace-scoped players for the Identities network page."""
+    user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view network identity data.")
+    rate(f"identities-online:{user['id']}", 120, 60)
+    servers = db.query(
+        "SELECT id,name,last_seen,snapshot FROM nx_servers WHERE workspace=%s ORDER BY name",
+        (user["workspace"],),
+    )
+    rows = []
+    online_servers = 0
+    for server in servers:
+        if not _online(server["last_seen"]):
+            continue
+        online_servers += 1
+        snapshot = server.get("snapshot") or {}
+        for player in snapshot.get("players", []):
+            rows.append({
+                "server": server["name"],
+                "src": player.get("src"),
+                "name": player.get("name") or "Unknown",
+                "ping": player.get("ping"),
+                "risk": player.get("risk"),
+                "sessionAge": player.get("sessionAge"),
+                "network": player.get("network") or {},
+            })
+    return reply({"players": rows, "servers": online_servers, "updatedAt": now()})
+
+
 @router.get("/identities/detail")
 async def identity_detail(request: Request):
     user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view network identity data.")
     db.ensure_schema()
     uid = request.query_params.get("uid", "")
     require(uid, 400, "An identity id is required.")
@@ -360,6 +395,8 @@ async def identity_detail(request: Request):
 @router.get("/identities/aliases")
 async def identity_aliases(request: Request):
     user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view network identity data.")
     db.ensure_schema()
     uid = request.query_params.get("uid", "")
     require(uid, 400, "An identity id is required.")
@@ -495,6 +532,15 @@ async def snapshot(request: Request, server_id: str):
         (server_id,),
     )
 
+    public_snapshot = server["snapshot"] or {}
+    if user["role"] not in ("owner", "administrator"):
+        # The server snapshot is shared across workspace roles. Never rely on
+        # the browser to hide identifiers/IPs: strip them at the API boundary.
+        public_snapshot = dict(public_snapshot)
+        public_snapshot["players"] = [
+            {**player, "network": None} for player in public_snapshot.get("players", [])
+        ]
+
     return reply({
         "id": server_id,
         "name": server["name"],
@@ -504,7 +550,7 @@ async def snapshot(request: Request, server_id: str):
         "online": _online(server["last_seen"]),
         "status": _health(server["last_seen"]),
         "serverTime": now(),
-        "snapshot": server["snapshot"],
+        "snapshot": public_snapshot,
         "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence],
         "commands": [
             {

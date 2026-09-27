@@ -40,6 +40,8 @@ const state = {
   truncated: false,
   treeHidden: false,
   selected: null,
+  onlinePlayers: [],
+  onlineServers: 0,
 };
 
 const el = (id) => document.getElementById(id);
@@ -121,6 +123,65 @@ function fail(message) {
   note(el('msg'), message, 'error');
   state.rows = [];
   render();
+}
+
+async function loadOnlinePlayers() {
+  const result = await api('/identities/online');
+  if (!result.ok) {
+    el('id-live-count').textContent = result.error || 'Unavailable';
+    el('id-live-rows').innerHTML = '<tr><td colspan="11" class="muted">Live network data is unavailable.</td></tr>';
+    return;
+  }
+  state.onlinePlayers = result.data.players || [];
+  state.onlineServers = result.data.servers || 0;
+  renderOnlinePlayers();
+}
+
+function renderOnlinePlayers() {
+  const query = el('id-q').value.trim().toLowerCase();
+  const players = state.onlinePlayers.filter((player) => {
+    const net = player.network || {};
+    const identifiers = net.identifiers || [];
+    const values = identifiers.map((entry) => (entry.kind || '') + ':' + (entry.value || '')).join(' ');
+    return !query || [player.name, player.server, player.src, net.ip || '', values]
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+  el('id-live-count').textContent = players.length + ' player' + (players.length === 1 ? '' : 's') +
+    ' · ' + state.onlineServers + ' server' + (state.onlineServers === 1 ? '' : 's') + ' · auto-refresh 5s';
+  const byKind = (player, kinds) => {
+    const net = player.network || {};
+    const entry = (net.identifiers || []).find((item) => kinds.includes(item.kind));
+    return entry ? escapeHtml(entry.value) : '—';
+  };
+  const shortId = (value) => value && value.length > 24 ? value.slice(0, 10) + '…' + value.slice(-8) : value;
+  el('id-live-rows').innerHTML = players.length ? players.map((player) => {
+    const license = byKind(player, ['license2', 'license']);
+    const licenseCell = license === '—' ? license : '<span title="' + license + '">' + shortId(license) + '</span>';
+    const net = player.network || {};
+    const identity = (net.identifiers || []).find((item) => item.kind === 'discord');
+    const discord = identity ? escapeHtml(identity.value) : '—';
+    const steam = byKind(player, ['steam']);
+    const fivem = byKind(player, ['fivem']);
+    const device = byKind(player, ['device']);
+    const otherIds = (net.identifiers || []).filter((entry) =>
+      !['discord', 'steam', 'fivem', 'license', 'license2', 'device'].includes(entry.kind)
+    ).map((entry) => escapeHtml(entry.kind + ':' + shortId(entry.value || ''))).join('<br>') || '—';
+    return '<tr><td><b>' + escapeHtml(player.name || 'Unknown') + '</b><small class="muted">ID ' +
+      escapeHtml(player.src == null ? '—' : player.src) + (player.risk ? ' · risk ' + escapeHtml(player.risk) : '') + '</small></td>' +
+      '<td>' + escapeHtml(player.server || '—') + '</td><td class="mono">' + discord + '</td>' +
+      '<td class="mono">' + steam + '</td><td class="mono">' + fivem + '</td><td class="mono">' + licenseCell + '</td>' +
+      '<td class="mono">' + device + '</td><td class="mono">' + otherIds + '</td>' +
+      '<td class="mono">' + escapeHtml(net.ip || '—') + '</td><td>' + escapeHtml(player.ping == null ? '—' : player.ping + ' ms') + '</td>' +
+      '<td>' + escapeHtml(formatSession(player.sessionAge)) + '</td></tr>';
+  }).join('') : '<tr><td colspan="11" class="muted">' +
+    (state.onlinePlayers.length ? 'No live players match this search.' : 'No players are connected to an online server.') + '</td></tr>';
+}
+
+function formatSession(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours ? hours + 'h ' + minutes + 'm' : minutes + 'm';
 }
 
 /* --------------------------------------------------------------------- *
@@ -330,6 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let timer = null;
 
   input.addEventListener('input', () => {
+    renderOnlinePlayers();
     clearTimeout(timer);
     timer = setTimeout(() => { state.page = 1; runSearch(true); }, 280);
   });
@@ -386,5 +448,9 @@ document.addEventListener('DOMContentLoaded', () => {
     runSearch(false);
   });
 
+  el('id-live-refresh').addEventListener('click', loadOnlinePlayers);
+
   runSearch(false);
+  loadOnlinePlayers();
+  window.setInterval(loadOnlinePlayers, 5000);
 });

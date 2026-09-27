@@ -34,6 +34,25 @@
         searched as a name.
       </p>
 
+      <section class="id-live-panel">
+        <div class="id-live-head">
+          <div>
+            <span class="eyebrow">LIVE NETWORK</span>
+            <h2>Connected players</h2>
+            <p class="muted">Live identifiers from every online server in this workspace.</p>
+          </div>
+          <div class="id-live-status"><span class="status-dot"></span><span id="id-live-count">Loading…</span>
+            <button class="id-tool" id="id-live-refresh" title="Refresh live players">↻</button></div>
+        </div>
+        <div class="table-scroll id-live-table-wrap">
+          <table class="id-live-table"><thead><tr>
+            <th>Player</th><th>Server</th><th>Discord</th><th>Steam</th><th>FiveM</th>
+            <th>License</th><th>Device</th><th>Other IDs</th><th>IP</th><th>Ping</th><th>Session</th>
+          </tr></thead><tbody id="id-live-rows"></tbody></table>
+        </div>
+        <p class="id-live-note muted">The table refreshes automatically. IP/device fields are opt-in per server; CFX tokens are never sent to the website.</p>
+      </section>
+
       <div class="id-toolbar" id="id-toolbar" hidden>
         <a class="id-tool" href="/identities" title="Clear the search">{{ ui.icon('grid', 15) }}</a>
         <span class="id-tool static" id="id-count">—</span>
