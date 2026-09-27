@@ -32,6 +32,7 @@
       <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} <span>Integrations</span></button>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} <span>Logs</span></button>
       <button class="sidebar-link" data-tab="Items">{{ ui.icon('log') }} <span>Whitelisted / Blacklisted</span></button>
+      <button class="sidebar-link" data-tab="Cleanup">{{ ui.icon('braces') }} <span>Cleanup</span></button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} <span>Configuration</span></button>
     </nav>
     <a class="shell-card" href="/dashboard">
@@ -76,7 +77,7 @@ const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
               'Activity', 'Identities', 'Screenshots', 'Protection', 'Webhooks',
-              'Integrations', 'Logs', 'Items', 'Configuration'];
+              'Integrations', 'Logs', 'Items', 'Cleanup', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -371,7 +372,8 @@ function playerPanel(p) {
       row('Player ID', num(p.src)) + row('Name', escapeHtml(p.name || '?')) +
       row('Ping', '<span class="pl-ping ' + pingClass(p.ping) + '">' + num(p.ping) + ' ms</span>') +
       row('Risk', '<span class="ov-risk ' + riskClass(p.risk, t) + '">' + num(p.risk) + '</span>' +
-        ' <span class="muted">flag ' + num(t.flag) + ' · kick ' + num(t.kick) + '</span>') +
+        ' <span class="muted">history only; module confidence decides action</span>') +
+      (p.trust != null ? row('Trust', num(p.trust) + ' / 100') : '') +
       row('Signals', num(p.signals)) +
       row('Lifecycle', escapeHtml(p.lifecycle || '—')) +
       row('Ped', '<span class="mono">' + escapeHtml(p.ped || '—') + '</span>') +
@@ -510,8 +512,71 @@ function viewDetections() {
       'No signals recorded', 'That is the normal state on a clean server.'));
 }
 
+let openProtection = null;
+function protectionFields(p) {
+  return { enabled: p.enabled, profile: p.profile, action: p.action,
+    minConfidence: p.minConfidence, screenshot: p.screenshot, discord: p.discord };
+}
 function viewDetectors() {
   const snap = data.snapshot || {};
+  const protections = snap.protections || [];
+  if (protections.length) {
+    const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+    const modeSetting = (((snap.config || {}).settings || {})['general.mode']);
+    const mode = modeSetting ? modeSetting.value : (snap.overview || {}).mode;
+    const groups = {};
+    protections.forEach((p) => (groups[p.category || 'Other'] = groups[p.category || 'Other'] || []).push(p));
+    const cards = Object.entries(groups).map(([group, rows]) =>
+      '<section class="pc-card"><header><h3>' + escapeHtml(group) + ' protection</h3><span>' +
+      rows.filter((p) => p.enabled).length + ' / ' + rows.length + ' enabled</span></header>' +
+      rows.map((p) => '<div class="pc-row"><span class="pc-glyph">' + icon('shield-check', 16) + '</span>' +
+        '<div class="pc-label"><b>' + escapeHtml(p.name) + '</b><small>' +
+        escapeHtml(p.mode || 'enforce') + ' · ' + escapeHtml(p.profile) + ' · ' + escapeHtml(p.action) + ' at ' + num(p.minConfidence) +
+        '% confidence</small></div><button class="pc-config" data-protection-open="' + escapeHtml(p.id) +
+        '" aria-label="Configure ' + escapeHtml(p.name) + '">' + icon('sliders', 17) + '</button>' +
+        '<button class="pc-switch ' + (p.enabled ? 'on' : '') + '" data-protection-toggle="' +
+        escapeHtml(p.id) + '" aria-label="Toggle ' + escapeHtml(p.name) + '" aria-pressed="' +
+        !!p.enabled + '"' + (!editable || p.locked ? ' disabled' : '') + '><i></i></button></div>').join('') +
+      '</section>').join('');
+    const active = protections.find((p) => p.id === openProtection);
+    const drawer = active ? '<div class="pc-shade" data-protection-close></div><aside class="pc-drawer" role="dialog" aria-label="' +
+      escapeHtml(active.name) + ' settings"><header><span class="eyebrow">NEXUSAC / ' + escapeHtml(data.name || 'SERVER') +
+      '</span><button data-protection-close aria-label="Close">×</button><h2>' + escapeHtml(active.name) +
+      '</h2></header><form id="protection-form" data-protection-id="' + escapeHtml(active.id) + '">' +
+      '<label class="pc-check">Protection enabled <input name="enabled" type="checkbox"' +
+      (active.enabled ? ' checked' : '') + '></label>' +
+      '<label>Detector mode <select data-detector="' + escapeHtml(active.id) +
+      '" data-expected="' + escapeHtml(active.mode || 'enforce') + '"' +
+      (!editable || active.locked ? ' disabled' : '') + '>' +
+      ['disabled', 'observe', 'enforce'].map((v) => '<option value="' + v + '"' +
+      (active.mode === v ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) +
+      '</option>').join('') + '</select></label>' +
+      '<label>Detection profile<select name="profile">' + ['relaxed', 'balanced', 'strict'].map((v) =>
+        '<option value="' + v + '"' + (active.profile === v ? ' selected' : '') + '>' +
+        v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
+      '<label>Enforcement<select name="action">' + ['log', 'kick', 'ban'].map((v) =>
+        '<option value="' + v + '"' + (active.action === v ? ' selected' : '') + '>' +
+        v.charAt(0).toUpperCase() + v.slice(1) + '</option>').join('') + '</select></label>' +
+      '<label>Minimum confidence <output id="pc-confidence">' + num(active.minConfidence) + '%</output>' +
+      '<input name="minConfidence" type="range" min="50" max="100" value="' +
+      num(active.minConfidence) + '"></label>' +
+      '<label class="pc-check">Evidence screenshot <input name="screenshot" type="checkbox"' +
+      (active.screenshot ? ' checked' : '') + '></label>' +
+      '<label class="pc-check">Discord notification <input name="discord" type="checkbox"' +
+      (active.discord ? ' checked' : '') + '></label>' +
+      '<p class="pc-note">' + escapeHtml(active.info || '') +
+      ' Changes apply live and are saved to the server. Global Observe mode records findings without enforcement.</p>' +
+      '<button class="button light" type="submit"' + (!editable || active.locked ? ' disabled' : '') +
+      '>Save changes</button></form></aside>' : '';
+    return offlineNote() + '<div class="pc-toolbar"><div><span class="eyebrow">PROTECTION CENTER</span>' +
+      '<h2>Detection modules</h2><p>Configure each detector and choose when evidence becomes enforcement.</p></div>' +
+      '<div class="button-row"><button class="button small ' + (mode === 'observe' ? 'light' : '') +
+      '" data-global-mode="observe"' + (!editable || mode === 'observe' ? ' disabled' : '') +
+      '>Observe</button><button class="button small ' + (mode === 'enforce' ? 'light' : '') +
+      '" data-global-mode="enforce"' + (!editable || mode === 'enforce' ? ' disabled' : '') +
+      '>Enforce</button></div></div><div class="pc-grid">' + cards + '</div>' + drawer +
+      commandLog();
+  }
   const editable = ['owner', 'administrator'].includes(data.role);
   const modeSetting = (((snap.config || {}).settings || {})['general.mode']);
   const globalMode = (modeSetting && modeSetting.value) || (snap.overview || {}).mode || 'observe';
@@ -885,6 +950,7 @@ const WEBHOOK_CATEGORIES = [
   ['resources', 'Resources', 'Resource start, stop and integrity changes.'],
   ['admin', 'Staff actions', 'What your own staff did, kept apart from detections.'],
   ['errors', 'Errors', 'The anti-cheat reporting its own failures.'],
+  ['screenshots', 'Detection screenshots', 'Captured evidence images attached to detection incidents.'],
 ];
 const pendingWebhooks = {};
 
@@ -1124,7 +1190,7 @@ function viewScreenshots() {
    firing one per keystroke would flood the queue. */
 
 const CONFIG_TABS = {
-  Core: ['general', 'risk', 'heartbeat', 'panel', 'eventlog'],
+  Core: ['general', 'risk', 'heartbeat', 'panel', 'eventlog', 'protection', 'trustscore', 'cleanup'],
   Detection: ['combat', 'godmode', 'freecam', 'playerguard', 'cursor', 'state', 'ragdoll',
               'stamina', 'weapons', 'network', 'entity', 'resourceguard', 'chatguard',
               'targeting', 'inputcheck', 'antiheadshot', 'shots', 'integrity', 'lua', 'griefing',
@@ -1132,7 +1198,7 @@ const CONFIG_TABS = {
               // "Other" -- eight real detectors sitting in a bucket nobody
               // thinks to open.
               'armory', 'weapondamage', 'backdoor', 'ocr', 'playerstate', 'rpfblock', 'sensors', 'social'],
-  Entity: ['vehicles', 'entitybehaviour'],
+  Entity: ['vehicles', 'entitybehaviour', 'entitylimits'],
   Enforcement: ['banmessage', 'ipbans', 'identityguard', 'enforce', 'evidence', 'log',
                 'honeypot', 'trust', 'txadmin', 'connect'],
 };
@@ -1425,13 +1491,34 @@ function commandLog() {
           'No changes yet', 'Configuration changes you make will show their outcome here.'));
 }
 
+function viewCleanup() {
+  const count = (data.snapshot || {}).cleanup || {};
+  const editable = ['owner', 'administrator'].includes(data.role) && data.online;
+  const cards = [
+    ['objects', 'Props and objects', 'Networked server objects or local scripted props'],
+    ['vehicles', 'Vehicles', 'Occupied vehicles are always kept'],
+    ['peds', 'Peds', 'Player peds are always kept'],
+  ].map(([category, label, note]) => '<section class="pc-card cleanup-card"><header><h3>' +
+    label + '</h3><span>' + num(count[category] || 0) + ' eligible on server</span></header>' +
+    '<p>' + escapeHtml(note) + '</p><div class="button-row">' +
+    '<button class="button small" data-cleanup="' + category + '" data-scope="server"' +
+    (!editable ? ' disabled' : '') + '>Clear server ' + category + '</button>' +
+    '<button class="button small" data-cleanup="' + category + '" data-scope="client"' +
+    (!editable ? ' disabled' : '') + '>Clear local client ' + category + '</button></div></section>').join('');
+  return offlineNote() + '<div class="pc-toolbar"><div><span class="eyebrow">WORLD MANAGEMENT</span>' +
+    '<h2>Cleanup</h2><p>Preview counts before clearing. Every action is confirmed and audited.</p></div></div>' +
+    '<div class="pc-grid">' + cards + '</div>' +
+    '<p class="panel-note">Client cleanup affects only non-networked scripted entities on each player. ' +
+    'Map assets, player peds and occupied vehicles remain.</p>' + commandLog();
+}
+
 const VIEWS = {
   Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
   Activity: viewActivity, Identities: viewIdentities,
   Screenshots: viewScreenshots, Protection: viewProtection,
   Webhooks: viewWebhooks, Integrations: viewIntegrations,
-  Logs: viewLogs, Items: viewItems, Configuration: viewConfig,
+  Logs: viewLogs, Items: viewItems, Cleanup: viewCleanup, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -1571,6 +1658,30 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  const cleanup = event.target.closest('[data-cleanup]');
+  if (cleanup) {
+    const category = cleanup.dataset.cleanup;
+    const scope = cleanup.dataset.scope;
+    const expected = Number(((data.snapshot || {}).cleanup || {})[category] || 0);
+    const warning = scope === 'server'
+      ? 'This will delete up to ' + expected + ' eligible server ' + category +
+        '. The count is checked again before execution. This cannot be undone.'
+      : 'This asks every online player to clear local scripted ' + category +
+        '. Exact counts cannot be previewed from the server. This cannot be undone.';
+    if (!confirm(warning + '\n\nContinue?')) return;
+    return void send({ type: 'cleanup', category, scope, expected },
+      scope + ' ' + category + ' cleanup');
+  }
+  const open = event.target.closest('[data-protection-open]');
+  if (open) { openProtection = open.dataset.protectionOpen; return render(); }
+  if (event.target.closest('[data-protection-close]')) { openProtection = null; return render(); }
+  const toggle = event.target.closest('[data-protection-toggle]');
+  if (toggle) {
+    const p = ((data.snapshot || {}).protections || []).find((row) => row.id === toggle.dataset.protectionToggle);
+    if (!p || p.locked) return;
+    return void send({ type: 'protection', id: p.id, ...protectionFields(p),
+      enabled: !p.enabled, expected: protectionFields(p) }, p.name);
+  }
   // Players tab: select a row, switch panel tab, close, export, refresh.
   if (tab === 'Players') {
     const pick = event.target.closest('[data-player]');
@@ -1756,6 +1867,7 @@ document.addEventListener('click', async (event) => {
       '<h2>' + escapeHtml(item.detection || 'Case') + '</h2>' +
       '<p class="muted mono">' + escapeHtml(item.resourceId || item.id) + ' · ' +
         escapeHtml(item.detector || '') + ' · ' + num(item.confidence) + '% · ' +
+        (item.trust != null ? 'trust ' + num(item.trust) + '/100 · ' : '') +
         escapeHtml(item.action || 'logged') + ' · ' + escapeHtml(ago(item.at, data.serverTime)) + '</p>' +
       (shots.length ? '<div class="evidence-preview">' + shots.join('') + '</div>'
         : '<div class="notice">No screenshot: ' +
@@ -2009,6 +2121,30 @@ document.addEventListener('change', async (event) => {
       Object.prototype.hasOwnProperty.call(configEdits, path));
     refreshSaveButton();
   }
+});
+
+document.addEventListener('input', (event) => {
+  if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {
+    const output = document.getElementById('pc-confidence');
+    if (output) output.textContent = event.target.value + '%';
+  }
+});
+document.addEventListener('submit', async (event) => {
+  const form = event.target.closest('#protection-form');
+  if (!form) return;
+  event.preventDefault();
+  const p = ((data.snapshot || {}).protections || []).find((row) => row.id === form.dataset.protectionId);
+  if (!p || p.locked) return;
+  const value = { type: 'protection', id: p.id,
+    enabled: form.elements.enabled.checked, profile: form.elements.profile.value,
+    action: form.elements.action.value, minConfidence: Number(form.elements.minConfidence.value),
+    screenshot: form.elements.screenshot.checked, discord: form.elements.discord.checked,
+    expected: protectionFields(p) };
+  const button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+  const ok = await send(value, p.name);
+  if (ok) { openProtection = null; setTimeout(() => load(true), 2200); }
+  else button.disabled = false;
 });
 
 /* The Save button lives outside the row being edited, so it is updated on its

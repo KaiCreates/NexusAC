@@ -165,6 +165,8 @@ class Snapshot(BaseModel):
     punishments: PunishmentBlock | None = None
     players: Rows = Field(default_factory=list)
     detectors: Rows = Field(default_factory=list)
+    protections: Rows = Field(default_factory=list)
+    cleanup: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
     bans: Rows = Field(default_factory=list)
     feed: Rows = Field(default_factory=list)
     logs: Rows = Field(default_factory=list)
@@ -283,7 +285,7 @@ class WebhookCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["webhook"]
     category: Literal["main", "bans", "kicks", "detections", "combat",
-                      "entities", "economy", "resources", "admin", "errors"]
+                      "entities", "economy", "resources", "admin", "errors", "screenshots"]
     url: Annotated[str, Field(max_length=250)] = ""
 
 
@@ -301,11 +303,32 @@ class PunishCommand(BaseModel):
     expected: Literal["none", "log", "risk", "kick", "ban"]
 
 
+class ProtectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["protection"]
+    id: Text
+    enabled: bool
+    profile: Literal["relaxed", "balanced", "strict"]
+    action: Literal["log", "kick", "ban"]
+    minConfidence: Annotated[int, Field(ge=50, le=100)]
+    screenshot: bool
+    discord: bool
+    expected: dict[str, Any]
+
+
+class CleanupCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["cleanup"]
+    category: Literal["vehicles", "peds", "objects"]
+    scope: Literal["server", "client"]
+    expected: Annotated[int, Field(ge=0)]
+
+
 Command = Annotated[
     Union[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
         UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
-        WebhookCommand,
+        WebhookCommand, ProtectionCommand, CleanupCommand,
     ],
     Field(discriminator="type"),
 ]

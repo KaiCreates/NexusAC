@@ -582,6 +582,16 @@ async def command(request: Request, server_id: str):
                     if k.get("kind") == payload.signal), None)
         require(row and row.get("action") == payload.expected, 409,
                 "That signal is unknown, or its punishment changed. Refresh before editing.")
+    elif kind == "protection":
+        row = next((p for p in snap.get("protections", []) if p.get("id") == payload.id), None)
+        fields = ("enabled", "profile", "action", "minConfidence", "screenshot", "discord")
+        require(row and not row.get("locked") and set(payload.expected) == set(fields)
+                and all(row.get(field) == payload.expected[field] for field in fields), 409,
+                "That protection is unknown, locked, or changed. Refresh before editing.")
+    elif kind == "cleanup":
+        require(payload.scope == "client" or
+                (snap.get("cleanup") or {}).get(payload.category) == payload.expected, 409,
+                "Cleanup preview changed. Refresh before clearing entities.")
 
     rate("command:" + str(user["user_id"]), 60, 60)
     command_id = new_id()
