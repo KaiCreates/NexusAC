@@ -158,6 +158,12 @@ with sync_playwright() as p:
         check("tab %s shows real data" % name, needle in body, body[:180])
         if name in ("Players", "Evidence", "Configuration"):
             page.screenshot(path=OUT + "/shot-%s.png" % name.lower(), full_page=True)
+        if name == "Detectors":
+            check("live Observe and Enforce controls are available",
+                  page.locator("[data-global-mode='observe']").count() == 1
+                  and page.locator("[data-global-mode='enforce']").count() == 1)
+            check("mode panel explains no restart is required",
+                  "without a server restart" in page.locator("#view").inner_text())
 
     # The high-risk player must be marked, and the clean one must not be.
     page.click(".sidebar-link[data-tab='Players']")

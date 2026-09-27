@@ -547,7 +547,7 @@ function viewDetectors() {
     '<div class="cfg-row"><div class="cfg-label"><b>' +
       (globalMode === 'enforce' ? 'Protection is enforcing' : 'Protection is observing') +
       '</b><small>Observe records evidence without automatic enforcement. Enforce applies the configured actions. ' +
-      'This choice is verified on disk and survives resource and server restarts.</small></div>' +
+      'Changes apply immediately without a server restart, are verified on disk, and survive resource and server restarts.</small></div>' +
       '<div class="cfg-control">' + globalControl + '</div></div>',
     '<span class="badge ' + (globalMode === 'enforce' ? 'success' : 'warning') + '">' +
       escapeHtml(globalMode) + '</span>') + panel('Detectors',
