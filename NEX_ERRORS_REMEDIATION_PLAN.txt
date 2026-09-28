@@ -1,0 +1,41 @@
+NexusAC error-log remediation -- 2026-09-28
+==========================================
+
+Evidence
+--------
+AntiCheatNexErrors.txt shows repeated bridge 503/429 responses and several
+ambiguous risk signals: selective client-module silence, Lua challenge
+timeouts, collision-disabled peds, short vehicle climbs, empty vehicle
+launches, and Godmode incidents combining a damage result with the state that
+caused it.
+
+Root causes and changes
+-----------------------
+1. FiveM encodes an empty Lua event-data table as []; the website required a
+   JSON object and rejected the entire sync. Normalize only empty [] to {}.
+2. All bridge actions shared one per-server rate bucket. Evidence media bursts
+   exhausted sync, ping and heartbeat too. Use per-action buckets and pace
+   screenshot uploads with bounded backoff on 429/network/server errors.
+3. An answered Lua challenge did not clear missed-challenge history. Count
+   consecutive misses only. Record timeouts and module silence at zero risk.
+4. Ped collision disabled and vehicle movement/ownership are not reliable
+   proof of the player's intent on this server. Keep those findings visible
+   for investigation without adding risk or automatic punishment.
+5. Godmode damage ignored plus invincibility/defense modifier can be one causal
+   state. Group those observations as one finding; require two separate causal
+   families before a Godmode incident can score.
+
+Verification and rollout
+------------------------
+* Validate website event-data normalization and bridge action limits locally.
+* Run luac on the modified resource files and the challenged-liveness,
+  Godmode, module, and boot checks against the active resource.
+* Deploy website commit, then restart only NexusAC during a planned resource
+  window. No player bans or historical risk records are modified by this fix.
+* Monitor bridge sync/heartbeat success and count zero-weight observations
+  before changing detector policy further. Correlate a legitimate script's
+  invincibility or movement changes with AuthorizeState grants where possible.
+
+The Documents/[nexus]/NexusAC copy is older and differs from the active
+Fxserver resource. Do not overwrite the active resource with that copy without
+first reconciling the two trees.

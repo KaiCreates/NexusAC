@@ -122,7 +122,12 @@ class EventRow(BaseModel):
     targetName: Annotated[str, Field(max_length=100)] | None = None
     # Left loose on purpose: the useful fields differ per event type and the
     # page queries them by path. Bounded by the snapshot size limit instead.
-    data: dict[str, Any] = Field(default_factory=dict)
+    # FiveM's json.encode turns an empty Lua table into [] rather than {}.
+    # Treat only that empty representation as an empty object; a populated
+    # array is still malformed event metadata and must be rejected.
+    data: Annotated[dict[str, Any], BeforeValidator(
+        lambda value: {} if value == [] else value
+    )] = Field(default_factory=dict)
 
 
 class EventBlock(BaseModel):

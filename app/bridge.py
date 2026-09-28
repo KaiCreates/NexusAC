@@ -44,18 +44,27 @@ async def json_body(request: Request, maximum: int) -> dict:
         raise HttpError(400, "Invalid JSON.")
 
 
-def server_for(request: Request, limit: int = 100) -> dict:
+BRIDGE_LIMITS = {
+    "ping": 30, "heartbeat": 30, "wait": 180, "sync": 60,
+    "media": 180, "stream-start": 60, "stream": 600,
+}
+
+
+def server_for(request: Request, action: str) -> dict:
     match = BEARER.match(request.headers.get("authorization", "") or "")
     require(match, 401, "A server API key is required.")
     server = db.one("SELECT * FROM nx_servers WHERE token_hash=%s", (sha256(match.group(1)),))
     require(server, 401, "Invalid or revoked server API key.")
-    rate(f"bridge:{server['id']}", limit, 60)
+    # Media uploads are bursty. Sharing their bucket with sync/heartbeat made
+    # an evidence burst mark an otherwise healthy server offline (429 loop).
+    rate(f"bridge:{server['id']}:{action}", BRIDGE_LIMITS[action], 60)
     return server  # type: ignore[return-value]
 
 
 async def handle(request: Request, action: str):
     require(request.method == "POST", 405, "POST required.")
-    server = server_for(request, 600 if action == "stream" else 100)
+    require(action in BRIDGE_LIMITS, 404, "Unknown bridge endpoint.")
+    server = server_for(request, action)
     server_id = str(server["id"])
 
     if action == "ping":
