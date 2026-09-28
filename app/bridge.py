@@ -479,7 +479,8 @@ async def _sync(request: Request, server: dict, server_id: str):
         for item in evidence:
             cur.execute(
                 """INSERT INTO nx_evidence VALUES(%s,%s,%s,%s)
-                   ON CONFLICT(server,id) DO UPDATE SET body=EXCLUDED.body, updated=EXCLUDED.updated""",
+                   ON CONFLICT(server,id) DO UPDATE SET body=EXCLUDED.body, updated=EXCLUDED.updated
+                   WHERE nx_evidence.body IS DISTINCT FROM EXCLUDED.body""",
                 (server_id, item["id"], db.jsonb(item), now()),
             )
 

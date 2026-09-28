@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, BeforeValidator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, BeforeValidator, model_validator
 
 MAX_SNAPSHOT_BYTES = 3_000_000
 MAX_MEDIA_BYTES = 1_450_000
@@ -263,6 +263,16 @@ class ScreenshotCommand(_Targeted):
     type: Literal["screenshot"]
 
 
+class VehicleExemptCommand(BaseModel):
+    """Exempt one player (the car developer) from the city speed limiter and
+    the vehicle boost checks. Stored by licence on the game server."""
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["vehicleExempt"]
+    target: Annotated[int, Field(gt=0)]
+    session: Text
+    enabled: bool
+
+
 class UnbanCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["unban"]
@@ -307,8 +317,8 @@ class WebhookCommand(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
     type: Literal["webhook"]
-    category: Literal["main", "bans", "kicks", "detections", "combat",
-                      "entities", "economy", "resources", "admin", "errors", "screenshots"]
+    category: Literal["main", "bans", "kicks", "detections", "movement", "combat",
+                      "entities", "economy", "resources", "admin", "errors", "screenshots", "aim"]
     url: Annotated[str, Field(max_length=250)] = ""
 
 
@@ -338,15 +348,37 @@ class ProtectionCommand(BaseModel):
     expected: dict[str, Any]
 
 
-class EventRuleCommand(BaseModel):
-    """Manage dashboard-side watch/ignore overrides for named server events."""
+EventName = Annotated[str, Field(min_length=3, max_length=96, pattern=r"^[A-Za-z0-9_:.-]+$")]
+
+
+class EventRuleItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["eventRule"]
-    operation: Literal["save", "delete"]
-    name: Annotated[str, Field(min_length=3, max_length=96,
-                               pattern=r"^[A-Za-z0-9_:.-]+$")]
+    name: EventName
     mode: Literal["watch", "ignore"] = "watch"
     perMinute: Annotated[int, Field(ge=1, le=1000)] = 30
+
+
+class EventRuleCommand(BaseModel):
+    """Manage dashboard-side watch/ignore overrides for named server events.
+
+    `import` carries a whole .txt import as one command, so the resource can
+    validate it and save it in a single all-or-nothing write."""
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["eventRule"]
+    operation: Literal["save", "delete", "import"]
+    name: EventName | None = None
+    mode: Literal["watch", "ignore"] = "watch"
+    perMinute: Annotated[int, Field(ge=1, le=1000)] = 30
+    rules: Annotated[list[EventRuleItem], Field(max_length=128)] | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "EventRuleCommand":
+        if self.operation == "import":
+            if not self.rules:
+                raise ValueError("an import needs at least one rule")
+        elif self.name is None:
+            raise ValueError("save and delete need an event name")
+        return self
 
 
 class StreamCommand(BaseModel):
@@ -384,6 +416,7 @@ Command = Annotated[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
         UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
         WebhookCommand, ProtectionCommand, EventRuleCommand, StreamCommand, CleanupCommand,
+        VehicleExemptCommand,
     ],
     Field(discriminator="type"),
 ]

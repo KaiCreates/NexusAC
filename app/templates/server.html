@@ -85,6 +85,7 @@ let live = true;
 let data = null;
 let serverData = null;
 let lastSignature = '';
+let loadInFlight = false;
 let lastSendError = '';
 const pendingChanges = new Map();
 const webhookDrafts = {};
@@ -96,6 +97,8 @@ const multiStreams = new Map();
 let multiStreamBusy = false;
 
 function changeKey(body) {
+  if (body.type === 'vehicleExempt') return 'vehexempt:' + body.target;
+  if (body.type === 'eventRule') return body.operation === 'import' ? 'eventRule:import' : 'eventRule:' + body.name;
   if (body.type === 'setting') return 'setting:' + body.path;
   if (body.type === 'detector') return 'detector:' + body.detector;
   if (body.type === 'protection') return 'protection:' + body.id;
@@ -105,6 +108,11 @@ function changeKey(body) {
 }
 function pending(key) { return pendingChanges.has(key); }
 function confirmed(snap, body, baselineRevision) {
+  if (body.type === 'vehicleExempt')
+    return (snap.players || []).some((p) => p.src === body.target && !!p.vehicleExempt === body.enabled);
+  // Event rules live in their own file (data/custom_event_rules.json), so they
+  // never advance the config revision below; the server's success is the proof.
+  if (body.type === 'eventRule') return true;
   const persistence = ((snap.config || {}).persistence || {});
   if (!persistence.verified || persistence.dirty ||
       Number(persistence.revision || 0) <= Number(baselineRevision || 0)) return false;
@@ -129,6 +137,10 @@ function confirmed(snap, body, baselineRevision) {
 function displaySnapshot(source) {
   const snap = JSON.parse(JSON.stringify(source || {}));
   pendingChanges.forEach(({ body }) => {
+    if (body.type === 'vehicleExempt') {
+      const row = (snap.players || []).find((p) => p.src === body.target);
+      if (row) row.vehicleExempt = body.enabled;
+    }
     if (body.type === 'setting') {
       const setting = (((snap.config || {}).settings || {})[body.path]);
       if (setting) setting.value = body.value;
@@ -172,10 +184,24 @@ function showServerData(fresh) {
       if (entry.body.type === 'webhook') delete webhookDrafts[entry.body.category];
       if (entry.body.type === 'protection') delete protectionDrafts[entry.body.id];
       note(msg, entry.label + ' saved and confirmed by the server.', 'good');
-    } else if (Date.now() - entry.at > 90000) {
+    } else if (command && command.status === 'succeeded' && Date.now() - entry.at > 120000) {
+      // The server ran it and said so, but no snapshot has shown the new value
+      // in two minutes. Trust the server's own state from here on.
+      pendingChanges.delete(key);
+      note(msg, entry.label + ' was applied by the server; the page is showing its current value.', 'warning');
+    } else if (!command && entry.id && Date.now() - entry.at > 20 * 60000) {
+      // The command has vanished from the queue listing entirely.
       pendingChanges.delete(key);
       if (entry.body.type === 'setting') configEdits[entry.body.path] = entry.body.value;
-      note(msg, entry.label + ' has not been confirmed. Check the server connection and recent changes.', 'bad');
+      note(msg, entry.label + ' could not be confirmed. Check the server connection and try again.', 'bad');
+    } else if (command && ['pending', 'sent'].includes(command.status) && !entry.waitingNoted &&
+               Date.now() - entry.at > 45000) {
+      // Still queued. It is NOT dropped: configuration waits up to 15 minutes
+      // for the server to collect it, and the page keeps showing your value.
+      // Giving up here after 90 s is what made options look like they reset.
+      entry.waitingNoted = true;
+      note(msg, entry.label + ' is queued and will apply as soon as the server collects it ' +
+        '(the game server has not synced yet — it stays queued for up to 15 minutes).', 'warning');
     }
   });
   data = { ...fresh, snapshot: displaySnapshot(fresh.snapshot) };
@@ -528,6 +554,8 @@ function playerPanel(p) {
     ? '<h4>' + icon('zap', 16) + ' Quick Actions</h4><div class="pl-acts">' +
       act('screenshot', 'camera', 'Shot') +
       act('freeze', 'lock', p.frozen ? 'Unfreeze' : 'Freeze', ' data-on="' + (!p.frozen) + '"') +
+      (admin ? act('vehexempt', 'zap', p.vehicleExempt ? 'Car limiter: exempt' : 'Exempt from car limiter',
+        ' data-on="' + (!p.vehicleExempt) + '"' + (pending('vehexempt:' + p.src) ? ' disabled' : '')) : '') +
       act('warn', 'flag', 'Warn') + act('kick', 'logout', 'Kick') +
       (admin ? act('ban', 'ban', 'Ban') : '') + '</div>'
     : '<p class="muted pl-note">' + (data.online ? 'Your role cannot act on players.' : 'Actions are unavailable while the server is offline.') + '</p>';
@@ -634,6 +662,20 @@ function viewDetections() {
 }
 
 let openProtection = null;
+/* Live counters and thresholds a module chooses to publish (NX-RETICLE-001
+   and NX-BUBBLE-001 send both). Only flat values are shown; nested
+   structures belong on their own pages, not in a settings drawer. */
+function protectionFacts(p) {
+  const flat = (obj) => Object.entries(obj || {})
+    .filter(([, v]) => v !== null && ['number', 'string', 'boolean'].includes(typeof v))
+    .sort(([a], [b]) => a.localeCompare(b));
+  const block = (title, rows) => rows.length
+    ? '<div class="pc-facts"><h4>' + escapeHtml(title) + '</h4><dl>' + rows.map(([k, v]) =>
+        '<dt>' + escapeHtml(k) + '</dt><dd>' + escapeHtml(typeof v === 'number' ? num(v) : String(v)) +
+        '</dd>').join('') + '</dl></div>'
+    : '';
+  return block('Live counters', flat(p.stats)) + block('Thresholds', flat(p.thresholds));
+}
 function protectionFields(p) {
   return { enabled: p.enabled, profile: p.profile, action: p.action,
     minConfidence: p.minConfidence, screenshot: p.screenshot, discord: p.discord };
@@ -693,6 +735,7 @@ function viewDetectors() {
       (selected.screenshot ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
       '<label class="pc-check">Discord notification <input name="discord" type="checkbox"' +
       (selected.discord ? ' checked' : '') + (protectionSaving ? ' disabled' : '') + '></label>' +
+      protectionFacts(active) +
       '<p class="pc-note">' + escapeHtml(active.info || '') +
       (active.evidenceLevel >= 3 ? ' This module relies heavily on client-side evidence; use Ban only after calibration.' : '') +
       (active.id === 'NX-ENTITY-002' ? ' The vehicle/prop rate limiter has a separate Kick entity spammers switch in Configuration → Entity; that threshold kick is independent of this signal action.' : '') +
@@ -1040,6 +1083,154 @@ async function loadIdentities() {
   if (tab === 'Identities') document.getElementById('view').innerHTML = viewIdentities();
 }
 
+/* ---- Event Protection export / import.
+
+   The export is plain text so it can be read by a person (or pasted into a
+   support chat) as easily as it can be re-imported. Only the [rules] section
+   is importable; the other sections are the server's own state, listed for
+   reading. Import is previewed first and then sent as ONE command, which the
+   resource validates and saves in a single all-or-nothing write. */
+const EVENT_NAME = /^[A-Za-z0-9_:.-]{3,96}$/;
+const EVENT_RULE_LIMIT = 128;
+let eventImport = null;   // { file, rules, invalid, added, updated, same, over }
+
+function padCol(value, width) {
+  const s = String(value === undefined || value === null ? '' : value);
+  return s.length >= width ? s + ' ' : s + ' '.repeat(width - s.length);
+}
+
+function eventExportText() {
+  const snap = data.snapshot || {};
+  const rules = snap.eventRules || [];
+  const actions = snap.events || [];
+  const inv = snap.resources || {};
+  const declared = inv.events || [];
+  const custom = rules.filter((r) => r.custom);
+  const builtIn = rules.filter((r) => !r.custom);
+  const width = (rows, key, min) => Math.min(70, Math.max(min, ...rows.map((r) => String(r[key] || '').length + 2)));
+  const L = [];
+  L.push('# NexusAC server events export');
+  L.push('# Server:   ' + (data.name || 'server'));
+  L.push('# Exported: ' + new Date().toISOString() + ' from the web panel');
+  L.push('# Declared events are found by scanning server-side source; they are not a record of calls.');
+  L.push('#');
+  L.push('# Import reads ONLY the [rules] section. One rule per line:');
+  L.push('#   <event name>  watch <limit per minute 1-1000>');
+  L.push('#   <event name>  ignore');
+  L.push('# A line with just an event name is a watch rule at 30 per minute. # starts a comment.');
+  L.push('');
+  L.push('[rules]');
+  L.push('# ' + custom.length + ' custom rule(s) saved from the website, limit ' + EVENT_RULE_LIMIT);
+  const wc = width(custom, 'name', 30);
+  custom.forEach((r) => L.push(padCol(r.name, wc) + (r.mode === 'ignore' ? 'ignore' : 'watch ' + (r.perMinute || 30))));
+  L.push('');
+  L.push('[built-in-rules]');
+  L.push('# ' + padCol('event', width(builtIn, 'name', 30) - 2) + padCol('mode', 8) + padCol('limit/min', 11) + padCol('seen', 9) + 'rate flags');
+  const wb = width(builtIn, 'name', 30);
+  builtIn.forEach((r) => L.push(padCol(r.name, wb) + padCol(r.mode, 8) + padCol(r.mode === 'watch' ? r.perMinute : '-', 11) +
+    padCol(r.accepted || 0, 9) + (r.exceeded || 0)));
+  L.push('');
+  L.push('[protected-actions]');
+  const wa = width(actions, 'name', 30), wr = width(actions, 'resource', 16);
+  L.push('# ' + padCol('action', wa - 2) + padCol('resource', wr) + padCol('budget', 18) + padCol('accepted', 10) + 'rejected');
+  actions.forEach((a) => L.push(padCol(a.name, wa) + padCol(a.resource || '-', wr) +
+    padCol((a.perMinute || 0) + '/min burst ' + (a.burst || 0), 18) + padCol(a.accepted || 0, 10) + (a.rejected || 0)));
+  L.push('');
+  L.push('[declared-events]');
+  L.push('# ' + declared.length + (inv.eventsTruncated ? ' of ' + (inv.eventTotal || '?') + ' (the server sends the first 2000)' : '') +
+    ' events registered or handled in server-side code');
+  const wd = width(declared, 'resource', 20);
+  L.push('# ' + padCol('resource', wd - 2) + 'event');
+  declared.forEach((e) => L.push(padCol(e.resource || '-', wd) + e.name));
+  L.push('');
+  return L.join('\n');
+}
+
+function downloadEventExport() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([eventExportText()], { type: 'text/plain;charset=utf-8' }));
+  a.download = 'nexus-events-' + (data.name || 'server').replace(/\W+/g, '-') + '-' +
+    new Date().toISOString().slice(0, 16).replace(/[:T]/g, '') + '.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* Reads an export (only its [rules] section) or any plain list of events. */
+function parseEventImport(text) {
+  const lines = String(text).replace(/^\uFEFF/, '').split(/\r?\n/);
+  const sectioned = lines.some((l) => /^\s*\[[a-z-]+\]\s*$/i.test(l));
+  let section = sectioned ? '' : 'rules';
+  const byName = new Map(), invalid = [];
+  lines.forEach((raw, i) => {
+    const head = raw.trim().match(/^\[([a-z-]+)\]$/i);
+    if (head) { section = head[1].toLowerCase(); return; }
+    if (section !== 'rules') return;
+    const line = raw.replace(/#.*/, '').trim();
+    if (!line) return;
+    const t = line.split(/[\s,;]+/).filter(Boolean);
+    const name = t[0];
+    if (!EVENT_NAME.test(name)) return invalid.push({ line: i + 1, text: raw.trim(), why: 'not a valid event name' });
+    let mode = 'watch', perMinute = 30;
+    const word = (t[1] || '').toLowerCase();
+    if (word === 'ignore') mode = 'ignore';
+    else if (word === 'watch') perMinute = t[2] === undefined ? 30 : Number(t[2]);
+    else if (/^\d+$/.test(word)) perMinute = Number(word);
+    else if (word) return invalid.push({ line: i + 1, text: raw.trim(),
+      why: 'expected watch <limit>, ignore, or a number after the event name' });
+    if (mode === 'watch' && (!Number.isInteger(perMinute) || perMinute < 1 || perMinute > 1000))
+      return invalid.push({ line: i + 1, text: raw.trim(), why: 'limit must be a whole number from 1 to 1000' });
+    byName.set(name, mode === 'watch' ? { name, mode, perMinute } : { name, mode });
+  });
+  return { rules: [...byName.values()], invalid };
+}
+
+function prepareEventImport(file, text) {
+  const parsed = parseEventImport(text);
+  const existing = new Map((((data.snapshot || {}).eventRules) || []).filter((r) => r.custom).map((r) => [r.name, r]));
+  let added = 0, updated = 0, same = 0;
+  const changes = parsed.rules.filter((r) => {
+    const old = existing.get(r.name);
+    if (!old) { added++; return true; }
+    if (old.mode === r.mode && (r.mode === 'ignore' || Number(old.perMinute) === r.perMinute)) { same++; return false; }
+    updated++; return true;
+  });
+  eventImport = { file, rules: changes, invalid: parsed.invalid, added, updated, same,
+                  over: existing.size + added > EVENT_RULE_LIMIT, total: existing.size + added };
+}
+
+function eventImportPanel(editable) {
+  const intro = '<p class="ev-io-note">Export writes every server event NexusAC knows about to a .txt file: ' +
+    'your custom rules, built-in rules, protected actions with their counters, and every event declared in server-side code. ' +
+    'Import reads the <b>[rules]</b> section of an export, or any list with one event per line ' +
+    '(<span class="mono">name watch 30</span>, <span class="mono">name ignore</span>, or just <span class="mono">name</span>).</p>';
+  const controls = '<div class="button-row">' +
+    '<button class="button small" type="button" data-event-export>Export events (.txt)</button>' +
+    '<label class="button small' + (editable ? '' : ' disabled') + '" style="cursor:' + (editable ? 'pointer' : 'not-allowed') + '">' +
+    'Import events (.txt)<input id="event-import-file" type="file" accept=".txt,text/plain" hidden' +
+    (editable ? '' : ' disabled') + '></label></div>';
+  let preview = '';
+  const x = eventImport;
+  if (x) {
+    const bad = x.invalid.slice(0, 8).map((v) => '<li><span class="muted">line ' + v.line + '</span> <span class="mono">' +
+      escapeHtml(short(v.text, 70)) + '</span> — ' + escapeHtml(v.why) + '</li>').join('');
+    const list = x.rules.slice(0, 12).map((r) => '<li class="mono">' + escapeHtml(r.name) + ' <span class="muted">' +
+      (r.mode === 'ignore' ? 'ignore' : 'watch ' + r.perMinute + '/min') + '</span></li>').join('');
+    const blocked = x.over || !x.rules.length;
+    preview = '<div class="ev-preview">' +
+      '<p class="ev-preview-head"><b>' + escapeHtml(x.file) + '</b>: ' + x.added + ' new, ' + x.updated + ' updated, ' + x.same + ' unchanged' +
+      (x.invalid.length ? ' <span class="badge danger">' + x.invalid.length + ' invalid line' + (x.invalid.length === 1 ? '' : 's') + '</span>' : '') + '</p>' +
+      (x.over ? '<p class="form-message bad">That would make ' + x.total + ' custom rules; the limit is ' + EVENT_RULE_LIMIT + '. Trim the file and try again.</p>' : '') +
+      (!x.rules.length && !x.over ? '<p class="muted">Nothing to change — every rule in the file is already saved.</p>' : '') +
+      (list ? '<ul class="ev-list">' + list + (x.rules.length > 12 ? '<li class="muted">…and ' + (x.rules.length - 12) + ' more</li>' : '') + '</ul>' : '') +
+      (bad ? '<p class="muted ev-skip">Skipped:</p><ul class="ev-list">' + bad +
+        (x.invalid.length > 8 ? '<li class="muted">…and ' + (x.invalid.length - 8) + ' more</li>' : '') + '</ul>' : '') +
+      '<div class="button-row ev-actions"><button class="button small" type="button" data-event-import-cancel>Cancel</button>' +
+      '<button class="button light small" type="button" data-event-import-confirm' + (blocked || !editable ? ' disabled' : '') + '>' +
+      'Import ' + x.rules.length + ' rule' + (x.rules.length === 1 ? '' : 's') + '</button></div></div>';
+  }
+  return panel('Export & import', '<div class="ev-io">' + intro + controls + preview + '</div>');
+}
+
 /* ---- Event Protection: the guarded net events and how they are holding up. */
 function viewProtection() {
   const actions = ((data.snapshot || {}).events) || [];
@@ -1075,6 +1266,7 @@ function viewProtection() {
     '<p class="panel-note">Watch rules only count calls and flag rate/numeric anomalies; they do not cancel events or prove abuse. The event must already be network-registered by its owning resource. Ignore creates an explicit no-monitor override. Always validate sensitive event payloads in the resource that owns them.</p>';
   return offlineNote() +
     '<p class="panel-note" style="margin:0 0 14px">Built-in protected actions are separate from custom event monitoring; this page shows registered action outcomes below.</p>' +
+    eventImportPanel(['owner', 'administrator'].includes(data.role) && data.online) +
     panel('Add event rule', form, '<span class="badge">' + customRules.filter((rule) => rule.custom).length + ' custom</span>') +
     panel('Custom and built-in event rules', table(['Event', 'Mode', 'Limit', 'Seen', 'Rate flags', ''], ruleRows,
       'No event rules reported', 'The server will publish built-in and saved custom rules here.')) +
@@ -1098,6 +1290,7 @@ const WEBHOOK_CATEGORIES = [
   ['bans', 'Bans', 'Every ban, automatic or by staff.'],
   ['kicks', 'Kicks', 'Every kick, including escalated warnings.'],
   ['detections', 'Detections', 'Risk signals as detectors raise them.'],
+  ['movement', 'Movement', 'Server-measured speed and movement findings.'],
   ['combat', 'Combat', 'Weapon, damage and aim findings.'],
   ['entities', 'Entities', 'Spawns that were denied or flagged.'],
   ['economy', 'Economy', 'Money and inventory findings.'],
@@ -1105,6 +1298,7 @@ const WEBHOOK_CATEGORIES = [
   ['admin', 'Staff actions', 'What your own staff did, kept apart from detections.'],
   ['errors', 'Errors', 'The anti-cheat reporting its own failures.'],
   ['screenshots', 'Detection screenshots', 'Captured evidence images attached to detection incidents.'],
+  ['aim', 'Aim detections', 'Invisible reticle and anti headshot bubble findings, including observe mode. Always its own channel when set.'],
 ];
 function viewWebhooks() {
   const integrations = (data.snapshot || {}).integrations || {};
@@ -1230,14 +1424,13 @@ function viewLogs() {
    Left rail lists who you can capture; the main area is the gallery. */
 
 function viewScreenshots() {
-  const shots = [];
-  const pending = [];
+  const entries = [];
   for (const item of (data.evidence || [])) {
     const images = item.images || 0;
-    for (let slot = 0; slot < images; slot++) shots.push({ item, slot });
+    for (let slot = 0; slot < images; slot++) entries.push({ item, slot });
     // A capture that was asked for but produced no image must still be visible:
     // "nothing here" and "it failed" are different answers to the same question.
-    if (!images) pending.push(item);
+    if (!images) entries.push({ item, slot: null });
   }
   const can = ['owner', 'administrator', 'moderator'].includes(data.role);
   const players = ((data.snapshot || {}).players || []);
@@ -1279,7 +1472,21 @@ function viewScreenshots() {
   // Case ids arrive as "boot:id"; only the id half is worth showing on a card.
   const caseRef = (id) => String(id || '').split(':').pop() || '—';
 
-  const cards = shots.map(({ item, slot }) => {
+  const cards = entries.map(({ item, slot }) => {
+    if (slot === null) {
+      const status = (item.screenshot || {}).status || 'none';
+      const bad = status === 'failed' || status === 'unavailable';
+      return '<article class="sc-card blank' + (bad ? ' bad' : '') + '">' +
+        '<div class="sc-preview empty">' +
+        '<div class="sc-cap"><span class="sc-cap-icon">' + icon('scan-line', 20) + '</span>' +
+        '<span class="sc-cap-label">' + escapeHtml(status.toUpperCase()) + '</span>' +
+        '<span class="sc-cap-id">' + escapeHtml(caseRef(item.id)) + ' · ' + clock(item.at) +
+        '</span></div></div>' +
+        '<div class="sc-foot"><div class="sc-foot-top"><b>' +
+        escapeHtml((item.player || {}).name || 'Unknown') + '</b></div>' +
+        '<div class="sc-foot-sub">' + escapeHtml(STATUS_TEXT[status] || status) + '</div>' +
+        '</div></article>';
+    }
     const url = '/api/control/servers/' + SERVER + '/media/' +
       encodeURIComponent(item.id) + '/' + slot;
     const detail = escapeHtml(item.detection || 'Detection') +
@@ -1300,25 +1507,7 @@ function viewScreenshots() {
       '<div class="sc-foot-sub">' + detail + '</div></div></article>';
   }).join('');
 
-  // A capture that was asked for and produced nothing still gets a card. It is
-  // the same question -- "what happened to this player" -- and "we tried and
-  // failed" is a different answer from "we never looked".
-  const blanks = pending.map((item) => {
-    const status = (item.screenshot || {}).status || 'none';
-    const bad = status === 'failed' || status === 'unavailable';
-    return '<article class="sc-card blank' + (bad ? ' bad' : '') + '">' +
-      '<div class="sc-preview empty">' +
-      '<div class="sc-cap"><span class="sc-cap-icon">' + icon('scan-line', 20) + '</span>' +
-      '<span class="sc-cap-label">' + escapeHtml(status.toUpperCase()) + '</span>' +
-      '<span class="sc-cap-id">' + escapeHtml(caseRef(item.id)) + ' · ' + clock(item.at) +
-      '</span></div></div>' +
-      '<div class="sc-foot"><div class="sc-foot-top"><b>' +
-      escapeHtml((item.player || {}).name || 'Unknown') + '</b></div>' +
-      '<div class="sc-foot-sub">' + escapeHtml(STATUS_TEXT[status] || status) + '</div>' +
-      '</div></article>';
-  }).join('');
-
-  const total = shots.length + pending.length;
+  const total = entries.length;
 
   // No header here: render() already sets the page eyebrow, title and subtitle
   // for this tab, so repeating them would print the heading twice.
@@ -1331,7 +1520,7 @@ function viewScreenshots() {
       : '') +
     capture +
     (total
-      ? '<div class="sc-grid">' + cards + blanks + '</div>'
+      ? '<div class="sc-grid">' + cards + '</div>'
       : '<div class="sc-empty"><h3>No captures yet</h3><p>' +
         'Pick a player above and request one. It arrives on the next poll or two, and every ' +
         'attempt shows here whether or not it produced an image.</p></div>') +
@@ -1878,7 +2067,13 @@ function render() {
   const focusType = focused && (focused.dataset.cfg ? 'cfg' : 'wh');
   const inDrawer = focused && !!focused.closest('.cfg-drawer');
   const caret = focused && typeof focused.selectionStart === 'number' ? focused.selectionStart : null;
+  const selectedCapture = tab === 'Screenshots' ? document.getElementById('sc-target')?.value : null;
   document.getElementById('view').innerHTML = (VIEWS[tab] || viewOverview)();
+  if (selectedCapture !== null) {
+    const target = document.getElementById('sc-target');
+    if (target && Array.from(target.options).some((option) => option.value === selectedCapture))
+      target.value = selectedCapture;
+  }
   if (focusKey) {
     const scope = inDrawer ? document.querySelector('.cfg-drawer') : document.getElementById('view');
     const replacement = scope && Array.from(scope.querySelectorAll('[data-' + focusType + ']'))
@@ -1892,8 +2087,11 @@ function render() {
 }
 
 async function load(force) {
-  if (!force && busy()) return;
-  const result = await api('/servers/' + SERVER + '/snapshot');
+  if (loadInFlight || (!force && pollPaused())) return;
+  loadInFlight = true;
+  let result;
+  try { result = await api('/servers/' + SERVER + '/snapshot'); }
+  finally { loadInFlight = false; }
   if (!result.ok) {
     if (result.status === 401) return (location.href = '/login?next=/dashboard');
     return note(msg, result.error, 'bad');
@@ -1901,9 +2099,17 @@ async function load(force) {
   showServerData(result.data);
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
-  const signature = JSON.stringify([tab, data.online, data.status, data.snapshot,
-                                    data.commands, Object.keys(configEdits),
-                                    (data.evidence || []).length]);
+  const evidencePage = tab === 'Evidence' || tab === 'Screenshots';
+  const signature = evidencePage
+    ? JSON.stringify([tab, data.online, data.status, data.evidence,
+                      tab === 'Screenshots' ? (((data.snapshot || {}).players || []).map((p) =>
+                        [p.src, p.name, p.sessionKey])) : null,
+                      tab === 'Screenshots' ? ((data.snapshot || {}).integrations || {}).screenshots : null,
+                      Math.floor((data.serverTime || 0) / 60)])
+    : JSON.stringify([tab, data.online, data.status, data.snapshot,
+                      data.commands, Object.keys(configEdits),
+                      (data.evidence || []).map((item) =>
+                        [item.id, item.at, item.images, item.screenshot])]);
   if (signature === lastSignature && !force) return;
   lastSignature = signature;
   render();
@@ -1939,6 +2145,10 @@ async function send(body, label) {
     result.ok ? 'warning' : 'bad');
   if (result.ok) setTimeout(() => load(true), 800);
   return result.ok;
+}
+
+function pollPaused() {
+  return Modal.open || (tab !== 'Evidence' && tab !== 'Screenshots' && busy());
 }
 
 function reasonDialog(title, warning, onConfirm, extraHtml) {
@@ -2007,6 +2217,17 @@ document.addEventListener('click', async (event) => {
     multiStreams.delete(stream.viewerId);
     note(msg, 'Live view stopped.', 'success');
     return render();
+  }
+  if (event.target.closest('[data-event-export]')) return void downloadEventExport();
+  if (event.target.closest('[data-event-import-cancel]')) { eventImport = null; return render(); }
+  const importConfirm = event.target.closest('[data-event-import-confirm]');
+  if (importConfirm && eventImport && eventImport.rules.length && !eventImport.over) {
+    importConfirm.disabled = true;
+    const count = eventImport.rules.length;
+    const ok = await send({ type: 'eventRule', operation: 'import', rules: eventImport.rules },
+      'Import ' + count + ' event rule' + (count === 1 ? '' : 's'));
+    if (ok) { eventImport = null; render(); } else importConfirm.disabled = false;
+    return;
   }
   const eventRuleDelete = event.target.closest('[data-event-rule-delete]');
   if (eventRuleDelete) {
@@ -2122,6 +2343,11 @@ document.addEventListener('click', async (event) => {
     if (act === 'screenshot') {
       return void send({ type: 'screenshot', ...base, reason: 'Staff screenshot request' },
         'Screenshot of ' + player.name);
+    }
+    if (act === 'vehexempt') {
+      const on = action.dataset.on === 'true';
+      return void send({ type: 'vehicleExempt', ...base, enabled: on },
+        on ? 'Exempt ' + player.name + ' from the car limiter' : 'Car limiter for ' + player.name);
     }
     if (act === 'freeze') {
       const on = action.dataset.on === 'true';
@@ -2557,6 +2783,15 @@ document.addEventListener('input', (event) => {
     if (output) output.textContent = event.target.value + '%';
   }
 });
+document.addEventListener('change', async (event) => {
+  if (event.target.id !== 'event-import-file') return;
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  if (file.size > 512 * 1024) return note(msg, 'That file is over 512 KB; an event list should be far smaller.', 'bad');
+  prepareEventImport(file.name, await file.text());
+  render();
+});
 document.addEventListener('submit', async (event) => {
   const eventRuleForm = event.target.closest('#event-rule-form');
   if (eventRuleForm) {
@@ -2660,6 +2895,12 @@ document.addEventListener('input', (event) => {
 });
 
 load(true);
-setInterval(() => { if (live && !busy()) load(false); }, 1000);
+// A changed detector select remains focused after its change event. Treating
+// that focus as an active edit used to suppress every live refresh, so the
+// command acknowledgement and persisted snapshot were never observed until
+// the 90-second timeout (or until the operator clicked elsewhere). Pending
+// writes must keep polling; other focused inputs still pause repainting so
+// typing and unsaved drafts are not disturbed.
+setInterval(() => { if (live && (!pollPaused() || pendingChanges.size > 0)) load(false); }, 1000);
 </script>
 {% endblock %}

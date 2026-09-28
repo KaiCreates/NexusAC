@@ -529,7 +529,8 @@ async def snapshot(request: Request, server_id: str):
     evidence = db.query(
         "SELECT e.id, e.body, (SELECT count(*) FROM nx_media m "
         "WHERE m.server=e.server AND m.evidence_id=e.id) AS images "
-        "FROM nx_evidence e WHERE e.server=%s ORDER BY e.updated DESC LIMIT 200",
+        "FROM nx_evidence e WHERE e.server=%s "
+        "ORDER BY (e.body->>'at')::double precision DESC, e.id DESC LIMIT 200",
         (server_id,),
     )
     # Recent commands travel with the snapshot. Without them this page could
@@ -597,6 +598,22 @@ async def server_activity(request: Request, server_id: str):
         user["workspace"], server_id, request.query_params.get("window", "24h")))
 
 
+# How long a queued command may wait for the game server to collect it.
+#
+# Configuration used to share the 60 s window meant for kicks and bans. One
+# slow or failed bridge sync (a cold Render worker, a 429, a rejected payload)
+# and every settings change expired unseen -- the page then fell back to the
+# server's real value, which looked like options "turning themselves back on"
+# every minute, and nothing was ever written to the server's config file.
+#
+# Configuration is safe to deliver late: every config command carries the
+# value it expects to replace, and the resource refuses it if that value has
+# changed since (sv_panel.lua webExecute). Moderation actions are not -- a kick
+# arriving ten minutes later is a different act -- so they keep 60 s.
+CONFIG_KINDS = {"setting", "detector", "protection", "punish", "webhook", "eventRule", "entity", "vehicleExempt"}
+CONFIG_TTL, ACTION_TTL = 900, 60
+
+
 @router.post("/servers/{server_id}/commands")
 async def command(request: Request, server_id: str):
     origin_check(request)
@@ -614,7 +631,7 @@ async def command(request: Request, server_id: str):
     # Every mutating command carries the value it expects to be acting on. If the
     # world moved since the page was drawn, the command is refused rather than
     # applied to whatever is there now.
-    if kind in ("warn", "kick", "ban", "freeze", "screenshot"):
+    if kind in ("warn", "kick", "ban", "freeze", "screenshot", "vehicleExempt"):
         require(
             any(p.get("src") == payload.target and p.get("sessionKey") == payload.session
                 for p in snap.get("players", [])),
@@ -706,7 +723,8 @@ async def command(request: Request, server_id: str):
             "INSERT INTO nx_commands(id,server,actor,actor_name,body,created,expires) "
             "VALUES(%s,%s,%s,%s,%s,%s,%s)",
             (command_id, server_id, user["user_id"], user["name"],
-             db.jsonb(payload.model_dump(mode="json")), timestamp, timestamp + 60),
+             db.jsonb(payload.model_dump(mode="json")), timestamp,
+             timestamp + (CONFIG_TTL if kind in CONFIG_KINDS else ACTION_TTL)),
         )
     audit(user, "command." + kind, str(server["name"]) + " / " + command_id)
     return reply({"id": command_id, "status": "pending"}, 202)
