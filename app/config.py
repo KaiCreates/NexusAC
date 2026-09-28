@@ -63,6 +63,13 @@ SUPABASE_JWKS_URL = os.environ.get(
 )
 DATABASE_URL = _require("DATABASE_URL")
 
+# Optional until the WebRTC signaling rollout is enabled. These credentials are
+# server-side only and must never be included in an API response or client bundle.
+CLOUDFLARE_REALTIME_APP_ID = os.environ.get("CLOUDFLARE_REALTIME_APP_ID", "").strip()
+CLOUDFLARE_REALTIME_APP_SECRET = os.environ.get(
+    "CLOUDFLARE_REALTIME_APP_SECRET", ""
+).strip()
+
 # Public origin of this website. Used for the CSRF origin check and for the
 # redirect target in confirmation emails. Render publishes the service's own URL,
 # so falling back to it means a deploy works before anyone sets APP_URL by hand;

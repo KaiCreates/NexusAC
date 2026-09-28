@@ -1,0 +1,100 @@
+NexusAC Multi-Stream redesign plan
+==================================
+
+Goal
+----
+Replace the current low-FPS image relay with real-time encoded video that is
+smooth at normal quality, low latency, and scales with *active viewers*, not
+the number of players online. Keep the stream on-demand, private, permissioned,
+audited, and independently removable from the anticheat's enforcement path.
+
+What the current implementation actually does
+----------------------------------------------
+1. Nexus-Screens reads the game texture with CfxTexture, copies pixels back to
+   CPU memory, and encodes every frame as a WebP/JPEG data URI.
+2. Each frame crosses a FiveM latent event to the server, then the server makes
+   an HTTP upload to the website.
+3. The website stores the latest base64 image in PostgreSQL. The browser polls
+   for it every 250 ms, decodes it, and replaces an <img> source.
+4. That is a sequence of still images, not a video codec/track. It pays repeated
+   image encode, base64 expansion, event/HTTP/DB overhead, and polling latency.
+   Quality tuning cannot remove those structural costs.
+
+Target design
+-------------
+1. Capture the existing CfxTexture-backed canvas only after an authorized,
+   audited operator starts a view. Convert the canvas to a browser video track
+   (captureStream) and publish using WebRTC (VP8/H.264 as supported by the
+   target FiveM CEF) to an SFU. Never send video frames through FiveM events,
+   the dashboard bridge, or PostgreSQL.
+2. Dashboard video elements subscribe directly to the SFU. The website API
+   remains the authorization/signaling plane only: it validates workspace role,
+   server, player session, view limit, expiry, and audit log, then mints a
+   short-lived one-time publisher/viewer grant. No long-lived provider secret
+   is sent to either browser/client. Grants are never put in URLs or logs.
+3. Run capture only for actively watched players. Use server-side per-player
+   publisher limits, per-admin viewer limits, configurable 720p/15-30 FPS,
+   adaptive bitrate, bounded duration, idle stop, and hard backpressure.
+   Start with 720p/15 FPS and adapt upward only when encoder/network stats allow;
+   test at 1, 4, 8 and 16 simultaneous publishers before raising caps.
+4. Surface stream state, capture FPS, bitrate, dropped frames, RTT and current
+   resolution from WebRTC getStats(); show a clear stale/paused/reconnecting
+   state instead of holding a frozen frame. On hidden dashboard tabs, lower
+   subscription quality or pause decode; stop all tracks and revoke grants on
+   stop, disconnect, timeout, permission loss, or server/resource restart.
+5. Keep an obvious in-game streaming indicator and staff audit record. Do not
+   capture microphone audio. The current supported game-texture capture path
+   supplies pixels, not game-output audio. Attaching Mumble audio would require
+   a separately designed, explicitly authorized voice-listener/relay path and
+   must not silently move players between voice channels or expose arbitrary
+   channels.
+
+Provider decision
+-----------------
+Selected: Cloudflare Realtime SFU (managed) for the first implementation. This
+avoids operating a public UDP/TURN media fleet alongside the FXServer. The
+website backend owns CLOUDFLARE_REALTIME_APP_ID and
+CLOUDFLARE_REALTIME_APP_SECRET; neither value may enter the dashboard, NUI,
+FiveM events, logs, or database.
+
+Implementation status (2026-09-28)
+----------------------------------
+* Architecture and provider selected; a backend-only Cloudflare signaling
+  adapter is now in place. Credentials/account application are not present in
+  this workspace, so live SFU validation/deployment is pending.
+* Preserve the current still-frame transport behind an explicit fallback until
+  publish + subscribe + stop have passed a real FiveM CEF end-to-end test.
+* Next: authenticated one-time stream leases,
+  publisher and subscriber signaling endpoints; then NUI captureStream and
+  dashboard RTCPeerConnection video elements. Never route media through game
+  events/HTTP uploads/PostgreSQL.
+* No audio in this phase. Mumble audio is a separate, explicit permission and
+  architecture decision; the screen texture contains video only.
+
+Acceptance tests
+----------------
+* Local test: supported CEF can captureStream() from the CfxTexture canvas,
+  create a WebRTC offer, publish, receive and render; unsupported CEF fails
+  clearly and falls back without crashing the player.
+* Load: 1/4/8/16 concurrent publishers; record publisher FPS, game-client FPS,
+  bitrate, end-to-end latency, CPU/GPU, packet loss, SFU egress, and reconnects.
+* Target: 720p at 15 FPS minimum on a stable connection; aim for 30 FPS where
+  available. No FiveM reliable event carries video; no frame writes/reads hit
+  PostgreSQL. Viewers should be within 500 ms glass-to-glass on a healthy route.
+* Security/lifecycle: unauthorized/expired/replayed grants rejected; session
+  swaps rejected; server cap and per-admin cap enforced; every start/stop
+  audited; tracks and grants revoked on stop/leave/restart; no audio capture.
+* Ship in phases: (1) provider spike on one test client, (2) one-viewer browser
+  proof, (3) multi-view adaptive load tests, (4) guarded rollout, (5) remove
+  still-frame transport after soak.
+
+Research note
+-------------
+XeroShield's public site describes its protection and monitoring generally but
+does not document its streaming codec, SFU, or transport. Therefore, no claim is
+made that its private implementation uses WebRTC. An available open-source
+FiveM capture project documents a Cloudflare Realtime SFU video path (30 FPS,
+720p cap) and explicitly says supported game-output capture does not provide
+audio; it is useful evidence that this architecture is feasible, not a drop-in
+dependency or endorsement. Do a license and security review before adopting
+third-party source.
