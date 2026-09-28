@@ -721,7 +721,9 @@ async def stream_frames(request: Request, server_id: str):
     server = _server_of(user, server_id)
     require(_online(server["last_seen"]), 409, "Server is offline.")
     db.ensure_schema()
-    rate("stream-view:" + str(user["user_id"]), 90, 60)
+    # Batched requests can poll the full four-tile view at 2 Hz. This is a
+    # dedicated limit and does not affect the dashboard's ordinary API budget.
+    rate("stream-view:" + str(user["user_id"]), 150, 60)
     payload = StreamFramesRequest(**await json_body(request, 12_000))
     timestamp = now()
     snapshot = server.get("snapshot") or {}
@@ -750,9 +752,13 @@ async def stream_frames(request: Request, server_id: str):
             frame = None
             if lease["capture_session"]:
                 cur.execute(
-                    """SELECT frame_seq,data,updated FROM nx_stream_frames
+                    """SELECT frame_seq,
+                              CASE WHEN frame_seq>%s THEN data ELSE NULL END AS data,
+                              updated
+                       FROM nx_stream_frames
                        WHERE server=%s AND target=%s AND updated>%s AND capture_session=%s""",
-                    (server_id, viewer.target, timestamp - 10, lease["capture_session"]),
+                    (viewer.afterSequence, server_id, viewer.target, timestamp - 10,
+                     lease["capture_session"]),
                 )
                 frame = cur.fetchone()
             frames.append({

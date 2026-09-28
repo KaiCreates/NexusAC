@@ -1618,9 +1618,9 @@ function viewMultiStream() {
       '</div><footer><span class="badge">LIVE JPEG</span><span class="muted">Audio unavailable — this capture source sends no audio.</span></footer></article>').join('');
 
   return '<div class="pc-toolbar"><div><span class="eyebrow">LIVE PLAYER REVIEW</span>' +
-    '<h2>Multi-Stream</h2><p>Watch up to four players at once. Each target receives a visible notice; feeds stop when you stop viewing.</p></div>' +
+    '<h2>Multi-Stream</h2><p>On-demand views for large servers: at most four per staff member and eight per server. Only selected players are captured.</p></div>' +
     '<span class="badge">' + multiStreams.size + ' / 4 active</span></div>' +
-    '<div class="notice">Screen feeds are low-rate JPEG frames, not full-motion video. No audio is captured. Audio will remain unavailable until a supported, player-consented capture source is integrated.</div>' +
+    '<div class="notice">Optimized JPEG feed: up to 2 FPS at 640px wide, depending on capture and connection speed. This is not 30/60 FPS video. No audio is captured.</div>' +
     (!allowed ? '<div class="notice bad">Only workspace owners and administrators can view player screens.</div>' : '') +
     (!available ? '<div class="notice warning">The server is offline or Nexus-Screens is not running.</div>' : '') +
     panel('Online players', table(['Player', 'Server ID', 'Ping', ''], picker,
@@ -2505,10 +2505,17 @@ async function pollMultiStreams() {
   if (tab !== 'Multi-Stream' || document.hidden || multiStreamBusy || !multiStreams.size) return;
   multiStreamBusy = true;
   const requested = [...multiStreams.values()];
-  const result = await api('/servers/' + SERVER + '/streams/frames', { streams: requested.map((stream) => ({
-    viewerId: stream.viewerId, target: stream.target, session: stream.session,
-  })) });
-  multiStreamBusy = false;
+  let result;
+  try {
+    result = await api('/servers/' + SERVER + '/streams/frames', { streams: requested.map((stream) => ({
+      viewerId: stream.viewerId, target: stream.target, session: stream.session,
+      afterSequence: stream.sequence,
+    })) });
+  } catch (_) {
+    return;
+  } finally {
+    multiStreamBusy = false;
+  }
   if (!result.ok) {
     if (result.status === 409 || result.status === 403) {
       multiStreams.clear();
@@ -2534,7 +2541,7 @@ async function pollMultiStreams() {
   }
   if (changed) render();
 }
-setInterval(pollMultiStreams, 1000);
+setInterval(pollMultiStreams, 500);
 
 document.addEventListener('input', (event) => {
   if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {

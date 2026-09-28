@@ -358,6 +358,7 @@ class StreamViewer(BaseModel):
     viewerId: Annotated[str, Field(pattern=r"^[0-9a-fA-F-]{36}$")]
     target: Annotated[int, Field(gt=0, le=1024)]
     session: Text
+    afterSequence: Annotated[int, Field(ge=0)] = 0
 
 
 class StreamFramesRequest(BaseModel):

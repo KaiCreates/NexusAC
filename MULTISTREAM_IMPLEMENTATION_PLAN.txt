@@ -44,3 +44,18 @@ Deployment
 Website schema migration and app changes must be deployed together. NexusAC
 and Nexus-Screens updates require resource restarts. Do not push/deploy without
 explicit instruction.
+
+Performance follow-up (JPEG transport ceiling)
+----------------------------------------------
+1. Keep capture on-demand; never capture all connected players. Retain the
+   server-wide active-view cap so 100+ connected players do not multiply work.
+2. Align the web relay and dashboard polling with the existing 500 ms capture
+   cadence (best case approximately 2 FPS, not 30/60 FPS).
+3. Send each viewer's last received frame sequence. Return image bytes only
+   when that sequence advances, avoiding repeated base64 transfer and decode.
+4. Slightly raise the thumbnail width/quality within existing payload limits
+   and verify tests. Monitor aggregate request/body size with eight viewers.
+5. For true smooth 30/60 FPS, prototype a consent-visible WebRTC/H.264 path
+   separately; repeated JPEG over FiveM events + HTTP/database polling is not
+   a suitable real-time media transport. Do not claim that this JPEG tuning
+   yields video-grade FPS or audio.
