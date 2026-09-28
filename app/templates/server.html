@@ -26,6 +26,7 @@
       <span class="nav-group">MEDIA</span>
       <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} <span>Screenshots</span>
         <span class="count" id="count-shots"></span></button>
+      <button class="sidebar-link" data-tab="Multi-Stream">{{ ui.icon('camera') }} <span>Multi-Stream</span></button>
       <span class="nav-group">MANAGEMENT</span>
       <button class="sidebar-link" data-tab="Protection">{{ ui.icon('lock') }} <span>Event Protection</span></button>
       <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} <span>Webhooks</span></button>
@@ -77,7 +78,7 @@
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
-              'Activity', 'Identities', 'Screenshots', 'Protection', 'Webhooks',
+              'Activity', 'Identities', 'Screenshots', 'Multi-Stream', 'Protection', 'Webhooks',
               'Integrations', 'Logs', 'ResourceLogs', 'Items', 'Cleanup', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
@@ -91,6 +92,8 @@ const fieldDrafts = {};
 const protectionDrafts = {};
 let resourceEventQuery = '';
 let resourceEventPage = 0;
+const multiStreams = new Map();
+let multiStreamBusy = false;
 
 function changeKey(body) {
   if (body.type === 'setting') return 'setting:' + body.path;
@@ -1040,6 +1043,16 @@ async function loadIdentities() {
 /* ---- Event Protection: the guarded net events and how they are holding up. */
 function viewProtection() {
   const actions = ((data.snapshot || {}).events) || [];
+  const customRules = ((data.snapshot || {}).eventRules) || [];
+  const declared = (((data.snapshot || {}).resources || {}).events) || [];
+  const suggestions = [...new Set(declared.map((row) => row.name).filter(Boolean))].slice(0, 2000);
+  const ruleRows = customRules.map((rule) => '<tr><td><b class="mono">' + escapeHtml(rule.name) + '</b>' +
+    (rule.custom ? ' <span class="badge">custom</span>' : '') + '</td><td>' +
+    (rule.mode === 'ignore' ? '<span class="badge warning">Ignored</span>' : '<span class="badge success">Watch only</span>') +
+    '</td><td>' + (rule.mode === 'watch' ? num(rule.perMinute) + '/min' : '—') + '</td>' +
+    '<td>' + num(rule.accepted) + '</td><td>' + num(rule.exceeded) + '</td><td>' +
+    (rule.custom ? '<button class="button small" data-event-rule-delete="' + escapeHtml(rule.name) + '">Remove</button>' : '<span class="muted">Built-in</span>') +
+    '</td></tr>');
   const rows = actions.map((a) => {
     const total = (a.accepted || 0) + (a.rejected || 0);
     const share = total ? Math.round(((a.rejected || 0) / total) * 100) : 0;
@@ -1053,9 +1066,18 @@ function viewProtection() {
   });
   const blocked = actions.reduce((sum, a) => sum + (a.rejected || 0), 0);
 
+  const form = '<form id="event-rule-form" class="filter-row" style="align-items:end">' +
+    '<label style="flex:2">Event name<input class="cfg-input" name="name" list="event-rule-suggestions" minlength="3" maxlength="96" pattern="[A-Za-z0-9_:.-]+" placeholder="resource:serverEvent" required></label>' +
+    '<datalist id="event-rule-suggestions">' + suggestions.map((name) => '<option value="' + escapeHtml(name) + '">').join('') + '</datalist>' +
+    '<label>Rule<select class="cfg-input" name="mode"><option value="watch">Watch / rate monitor</option><option value="ignore">Ignore</option></select></label>' +
+    '<label>Limit per minute<input class="cfg-input" name="perMinute" type="number" min="1" max="1000" value="30"></label>' +
+    '<button class="button primary" type="submit">Save rule</button></form>' +
+    '<p class="panel-note">Watch rules only count calls and flag rate/numeric anomalies; they do not cancel events or prove abuse. The event must already be network-registered by its owning resource. Ignore creates an explicit no-monitor override. Always validate sensitive event payloads in the resource that owns them.</p>';
   return offlineNote() +
-    '<p class="panel-note" style="margin:0 0 14px">Every net event listed here is rate limited on ' +
-    'the server. A rejection is a call that exceeded its budget and never reached the handler.</p>' +
+    '<p class="panel-note" style="margin:0 0 14px">Built-in protected actions are separate from custom event monitoring; this page shows registered action outcomes below.</p>' +
+    panel('Add event rule', form, '<span class="badge">' + customRules.filter((rule) => rule.custom).length + ' custom</span>') +
+    panel('Custom and built-in event rules', table(['Event', 'Mode', 'Limit', 'Seen', 'Rate flags', ''], ruleRows,
+      'No event rules reported', 'The server will publish built-in and saved custom rules here.')) +
     panel('Event Protection',
       table(['Event', 'Resource', 'Budget', 'Accepted', 'Rejected'], rows,
         'No guarded events', 'The resource reports its protected actions with each snapshot.'),
@@ -1574,6 +1596,39 @@ function viewConfig() {
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>') + drawer;
 }
 
+function viewMultiStream() {
+  const players = ((data.snapshot || {}).players || []);
+  const allowed = ['owner', 'administrator'].includes(data.role);
+  const available = data.online && (((data.snapshot || {}).integrations || {}).screenshots === 'started');
+  const picker = players.map((player) => {
+    const watching = [...multiStreams.values()].some((stream) => stream.target === player.src);
+    return '<tr><td><b>' + escapeHtml(player.name || 'Unknown') + '</b></td><td>' + player.src +
+      '</td><td>' + escapeHtml(player.ping === undefined ? '—' : player.ping + ' ms') + '</td><td>' +
+      (watching ? '<span class="badge success">Watching</span>' :
+        '<button class="button small" data-stream-watch="' + player.src + '"' +
+          (!allowed || !available ? ' disabled' : '') + '>Watch screen</button>') + '</td></tr>';
+  });
+  const tiles = [...multiStreams.values()].map((stream) =>
+    '<article class="stream-tile"><header><div><b>' + escapeHtml(stream.name) + '</b>' +
+      '<small data-stream-status="' + escapeHtml(stream.viewerId) + '">Player ' + stream.target + ' · ' + escapeHtml(stream.status || 'Connecting…') + '</small></div>' +
+      '<button class="button small" data-stream-stop="' + escapeHtml(stream.viewerId) + '">Stop</button></header>' +
+      '<div class="stream-frame">' + (stream.frame
+        ? '<img data-stream-frame="' + escapeHtml(stream.viewerId) + '" src="' + stream.frame + '" alt="Live screen for ' + escapeHtml(stream.name) + '">'
+        : '<div class="stream-placeholder"><span class="pulse-dot"></span><b>Waiting for first frame</b><small>The player is notified when viewing starts.</small></div>') +
+      '</div><footer><span class="badge">LIVE JPEG</span><span class="muted">Audio unavailable — this capture source sends no audio.</span></footer></article>').join('');
+
+  return '<div class="pc-toolbar"><div><span class="eyebrow">LIVE PLAYER REVIEW</span>' +
+    '<h2>Multi-Stream</h2><p>Watch up to four players at once. Each target receives a visible notice; feeds stop when you stop viewing.</p></div>' +
+    '<span class="badge">' + multiStreams.size + ' / 4 active</span></div>' +
+    '<div class="notice">Screen feeds are low-rate JPEG frames, not full-motion video. No audio is captured. Audio will remain unavailable until a supported, player-consented capture source is integrated.</div>' +
+    (!allowed ? '<div class="notice bad">Only workspace owners and administrators can view player screens.</div>' : '') +
+    (!available ? '<div class="notice warning">The server is offline or Nexus-Screens is not running.</div>' : '') +
+    panel('Online players', table(['Player', 'Server ID', 'Ping', ''], picker,
+      'No players online', 'Connected players will appear here when the server reports in.')) +
+    panel('Live views', tiles ? '<div class="stream-grid">' + tiles + '</div>' :
+      '<div class="empty-state"><h3>No active views</h3><p>Choose a player above to start a temporary live view.</p></div>');
+}
+
 function viewResourceLogs() {
   const snap = data.snapshot || {};
   const inventory = snap.resources || {};
@@ -1739,7 +1794,7 @@ const VIEWS = {
   Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
   Activity: viewActivity, Identities: viewIdentities,
-  Screenshots: viewScreenshots, Protection: viewProtection,
+  Screenshots: viewScreenshots, 'Multi-Stream': viewMultiStream, Protection: viewProtection,
   Webhooks: viewWebhooks, Integrations: viewIntegrations,
   Logs: viewLogs, ResourceLogs: viewResourceLogs, Items: viewItems, Cleanup: viewCleanup, Configuration: viewConfig,
 };
@@ -1778,24 +1833,25 @@ function renderStats() {
    the title block alone because its heading is part of that page's design. */
 // Overview now draws its own hero, status card and KPI tiles inside the view,
 // so the generic title block and toolbar are only for Screenshots / other tabs.
-const HEADER_TABS = ['Screenshots'];
+const HEADER_TABS = ['Screenshots', 'Multi-Stream'];
 const STATS_TABS = [];
 
 function render() {
   const wantsHeader = HEADER_TABS.includes(tab);
   const wantsStats = STATS_TABS.includes(tab);
 
-  document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots');
+  document.getElementById('main').classList.toggle('screenshots-route', tab === 'Screenshots' || tab === 'Multi-Stream');
   document.getElementById('main').classList.toggle('overview-route', tab === 'Overview' || tab === 'Players');
   document.querySelector('.dashboard-title').hidden = !wantsHeader;
   document.getElementById('toolbar').hidden = tab === 'Overview';
   document.getElementById('stats').hidden = !wantsStats;
 
   document.getElementById('eyebrow').textContent =
-    tab === 'Screenshots' ? 'WORKSPACE / SCREENSHOTS' : 'COMMAND CENTER';
-  document.getElementById('name').textContent = tab === 'Screenshots' ? 'Screenshots' : (data.name || 'Server');
+    tab === 'Screenshots' ? 'WORKSPACE / SCREENSHOTS' : tab === 'Multi-Stream' ? 'WORKSPACE / LIVE VIEW' : 'COMMAND CENTER';
+  document.getElementById('name').textContent = tab === 'Screenshots' ? 'Screenshots' : tab === 'Multi-Stream' ? 'Multi-Stream' : (data.name || 'Server');
   document.getElementById('subtitle').textContent = tab === 'Screenshots'
     ? 'Evidence linked directly to detection records.'
+    : tab === 'Multi-Stream' ? 'Temporary, staff-audited player screen views.'
     : "A live view of this server's security.";
   document.getElementById('crumb').textContent =
     ({ Protection: 'Event Protection' })[tab] || tab;
@@ -1914,6 +1970,54 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  const streamWatch = event.target.closest('[data-stream-watch]');
+  if (streamWatch) {
+    const player = playerOf(streamWatch.dataset.streamWatch);
+    if (!player || !player.sessionKey) return note(msg, 'That player session changed. Refresh the player list.', 'bad');
+    if (multiStreams.size >= 4) return note(msg, 'You can watch at most four players at once.', 'bad');
+    if (!confirm('Start a live screen view of ' + player.name + '? They will receive a visible notice. Audio is not captured.')) return;
+    const viewerId = crypto.randomUUID();
+    streamWatch.disabled = true;
+    const result = await api('/servers/' + SERVER + '/commands', {
+      type: 'stream', operation: 'start', target: player.src,
+      session: player.sessionKey, viewerId,
+    });
+    if (!result.ok) {
+      streamWatch.disabled = false;
+      return note(msg, result.error, 'bad');
+    }
+    multiStreams.set(viewerId, { viewerId, target: player.src, session: player.sessionKey,
+      name: player.name || 'Player ' + player.src, frame: '', sequence: 0, status: 'Starting…' });
+    note(msg, 'Stream request queued. The player will be notified.', 'warning');
+    return render();
+  }
+  const streamStop = event.target.closest('[data-stream-stop]');
+  if (streamStop) {
+    const stream = multiStreams.get(streamStop.dataset.streamStop);
+    if (!stream) return;
+    streamStop.disabled = true;
+    const result = await api('/servers/' + SERVER + '/commands', {
+      type: 'stream', operation: 'stop', target: stream.target,
+      session: stream.session, viewerId: stream.viewerId,
+    });
+    if (!result.ok) {
+      streamStop.disabled = false;
+      return note(msg, result.error, 'bad');
+    }
+    multiStreams.delete(stream.viewerId);
+    note(msg, 'Live view stopped.', 'success');
+    return render();
+  }
+  const eventRuleDelete = event.target.closest('[data-event-rule-delete]');
+  if (eventRuleDelete) {
+    const name = eventRuleDelete.dataset.eventRuleDelete;
+    if (!confirm('Remove the custom rule for ' + name + '? Built-in monitoring, if any, will resume.')) return;
+    eventRuleDelete.disabled = true;
+    const ok = await send({ type: 'eventRule', operation: 'delete', name,
+      mode: 'watch', perMinute: 30 }, 'Remove event rule');
+    if (!ok) eventRuleDelete.disabled = false;
+    return;
+  }
   const eventPage = event.target.closest('[data-resource-event-page]');
   if (eventPage) {
     resourceEventPage = Math.max(0, resourceEventPage + Number(eventPage.dataset.resourceEventPage || 0));
@@ -2397,6 +2501,41 @@ document.addEventListener('change', async (event) => {
   }
 });
 
+async function pollMultiStreams() {
+  if (tab !== 'Multi-Stream' || document.hidden || multiStreamBusy || !multiStreams.size) return;
+  multiStreamBusy = true;
+  const requested = [...multiStreams.values()];
+  const result = await api('/servers/' + SERVER + '/streams/frames', { streams: requested.map((stream) => ({
+    viewerId: stream.viewerId, target: stream.target, session: stream.session,
+  })) });
+  multiStreamBusy = false;
+  if (!result.ok) {
+    if (result.status === 409 || result.status === 403) {
+      multiStreams.clear();
+      render();
+    }
+    return;
+  }
+  let changed = false;
+  for (const frame of result.data.frames || []) {
+    const stream = multiStreams.get(frame.viewerId);
+    if (!stream) continue;
+    if (!frame.active) { multiStreams.delete(frame.viewerId); changed = true; continue; }
+    if (frame.data && Number(frame.sequence) > stream.sequence) {
+      stream.sequence = Number(frame.sequence);
+      stream.frame = frame.data;
+      stream.status = 'Live · frame ' + stream.sequence;
+      const image = document.querySelector('[data-stream-frame="' + stream.viewerId + '"]');
+      if (image) image.src = frame.data;
+      else changed = true;
+      const status = document.querySelector('[data-stream-status="' + stream.viewerId + '"]');
+      if (status) status.textContent = 'Player ' + stream.target + ' · ' + stream.status;
+    }
+  }
+  if (changed) render();
+}
+setInterval(pollMultiStreams, 1000);
+
 document.addEventListener('input', (event) => {
   if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {
     const form = event.target.closest('#protection-form');
@@ -2412,6 +2551,23 @@ document.addEventListener('input', (event) => {
   }
 });
 document.addEventListener('submit', async (event) => {
+  const eventRuleForm = event.target.closest('#event-rule-form');
+  if (eventRuleForm) {
+    event.preventDefault();
+    const name = eventRuleForm.elements.name.value.trim();
+    const mode = eventRuleForm.elements.mode.value;
+    const perMinute = Number(eventRuleForm.elements.perMinute.value);
+    if (!/^[A-Za-z0-9_:.-]{3,96}$/.test(name))
+      return note(msg, 'Use 3–96 letters, digits, underscores, colons, dots, or hyphens.', 'bad');
+    if (mode === 'watch' && (!Number.isInteger(perMinute) || perMinute < 1 || perMinute > 1000))
+      return note(msg, 'The rate must be a whole number from 1 to 1000 per minute.', 'bad');
+    const button = eventRuleForm.querySelector('[type="submit"]');
+    button.disabled = true;
+    const ok = await send({ type: 'eventRule', operation: 'save', name, mode, perMinute },
+      mode === 'watch' ? 'Save event watch rule' : 'Save event ignore rule');
+    if (!ok) button.disabled = false;
+    return;
+  }
   const form = event.target.closest('#protection-form');
   if (!form) return;
   event.preventDefault();

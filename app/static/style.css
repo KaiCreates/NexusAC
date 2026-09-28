@@ -4690,3 +4690,17 @@ th.ev-cols button:hover { color: #f5f5f5; }
 .cfg-drawer-body .toggle{justify-self:start}
 .cfg-row .badge.warning{white-space:nowrap}
 @media(max-width:700px){.cfg-drawer-body dl{grid-template-columns:1fr;gap:5px}.dashboard.full .cfg-tabs button{min-width:100px}}
+
+/* Multi-Stream live player review. */
+.stream-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.stream-tile{min-width:0;overflow:hidden;border:1px solid #303136;border-radius:12px;background:#101113}
+.stream-tile>header,.stream-tile>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px}
+.stream-tile>header{border-bottom:1px solid #28292d}.stream-tile>header b,.stream-tile>header small{display:block}
+.stream-tile>header small{margin-top:4px;color:#92949c;font-size:11px}
+.stream-tile>footer{justify-content:flex-start;flex-wrap:wrap;border-top:1px solid #28292d;font-size:11px}
+.stream-frame{display:grid;place-items:center;aspect-ratio:16/9;overflow:hidden;background:radial-gradient(ellipse at center,#18191c,#09090a)}
+.stream-frame img{display:block;width:100%;height:100%;object-fit:contain}
+.stream-placeholder{display:grid;justify-items:center;gap:9px;color:#c9cbd1;text-align:center}
+.stream-placeholder small{color:#8a8c94}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#7be6b0;box-shadow:0 0 13px #7be6b0;animation:streamPulse 1.6s infinite}
+@keyframes streamPulse{50%{opacity:.35;box-shadow:0 0 3px #7be6b0}}
+@media(max-width:800px){.stream-grid{grid-template-columns:1fr}}

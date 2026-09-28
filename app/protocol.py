@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, BeforeValida
 
 MAX_SNAPSHOT_BYTES = 3_000_000
 MAX_MEDIA_BYTES = 1_450_000
+MAX_STREAM_FRAME_BYTES = 400_000
 
 
 def _as_list(value: Any) -> Any:
@@ -175,6 +176,7 @@ class Snapshot(BaseModel):
     resources: dict[str, Any] = Field(default_factory=dict)
     config: ConfigBlock = Field(default_factory=ConfigBlock)
     events: Any = None
+    eventRules: Rows = Field(default_factory=list)
     integrations: Any = None
     evidence: Annotated[
         list[EvidenceItem], BeforeValidator(_as_list), Field(max_length=200)
@@ -206,6 +208,19 @@ class MediaRequest(BaseModel):
     evidenceId: Annotated[str, Field(min_length=1, max_length=200)]
     slot: Annotated[int, Field(ge=0, le=2)]
     data: Annotated[str, Field(max_length=MAX_MEDIA_BYTES, pattern=r"^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$")]
+
+
+class StreamStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target: Annotated[int, Field(gt=0, le=1024)]
+    playerSession: Annotated[str, Field(min_length=1, max_length=100)]
+    captureSession: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
+
+
+class StreamFrameRequest(StreamStartRequest):
+    sequence: Annotated[int, Field(gt=0)]
+    data: Annotated[str, Field(max_length=MAX_STREAM_FRAME_BYTES,
+                               pattern=r"^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$")]
 
 
 # --------------------------------------------------------------------------- #
@@ -318,6 +333,38 @@ class ProtectionCommand(BaseModel):
     expected: dict[str, Any]
 
 
+class EventRuleCommand(BaseModel):
+    """Manage dashboard-side watch/ignore overrides for named server events."""
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["eventRule"]
+    operation: Literal["save", "delete"]
+    name: Annotated[str, Field(min_length=3, max_length=96,
+                               pattern=r"^[A-Za-z0-9_:.-]+$")]
+    mode: Literal["watch", "ignore"] = "watch"
+    perMinute: Annotated[int, Field(ge=1, le=1000)] = 30
+
+
+class StreamCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["stream"]
+    operation: Literal["start", "stop"]
+    target: Annotated[int, Field(gt=0, le=1024)]
+    session: Text
+    viewerId: Annotated[str, Field(pattern=r"^[0-9a-fA-F-]{36}$")]
+
+
+class StreamViewer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    viewerId: Annotated[str, Field(pattern=r"^[0-9a-fA-F-]{36}$")]
+    target: Annotated[int, Field(gt=0, le=1024)]
+    session: Text
+
+
+class StreamFramesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    streams: Annotated[list[StreamViewer], BeforeValidator(_as_list), Field(max_length=4)]
+
+
 class CleanupCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["cleanup"]
@@ -330,7 +377,7 @@ Command = Annotated[
     Union[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
         UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
-        WebhookCommand, ProtectionCommand, CleanupCommand,
+        WebhookCommand, ProtectionCommand, EventRuleCommand, StreamCommand, CleanupCommand,
     ],
     Field(discriminator="type"),
 ]

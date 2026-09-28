@@ -15,7 +15,7 @@ from . import (
     punishments as punishment_store, supabase_auth,
 )
 from .bridge import handle as bridge_handle, json_body
-from .protocol import parse_command
+from .protocol import StreamFramesRequest, parse_command
 from .security import (
     HttpError, PERMISSIONS, audit, authenticated, create_session, new_id, new_secret, now,
     origin_check, rate, reply, require, set_session_cookie, sha256, token_from,
@@ -648,17 +648,120 @@ async def command(request: Request, server_id: str):
         require(payload.scope == "client" or
                 (snap.get("cleanup") or {}).get(payload.category) == payload.expected, 409,
                 "Cleanup preview changed. Refresh before clearing entities.")
+    elif kind == "stream":
+        db.ensure_schema()
+        if payload.operation == "start":
+            require(any(p.get("src") == payload.target and p.get("sessionKey") == payload.session
+                        for p in snap.get("players", [])),
+                    409, "That player's session changed. Refresh before starting a stream.")
+            require((snap.get("integrations") or {}).get("screenshots") == "started",
+                    409, "Nexus-Screens is not running on this server.")
 
     rate("command:" + str(user["user_id"]), 60, 60)
     command_id = new_id()
-    db.execute(
-        "INSERT INTO nx_commands(id,server,actor,actor_name,body,created,expires) "
-        "VALUES(%s,%s,%s,%s,%s,%s,%s)",
-        (command_id, server_id, user["user_id"], user["name"],
-         db.jsonb(payload.model_dump(mode="json")), now(), now() + 60),
-    )
+    with db.transaction() as cur:
+        timestamp = now()
+        if kind == "stream":
+            cur.execute("SELECT id FROM nx_servers WHERE id=%s FOR UPDATE", (server_id,))
+            cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND expires<=%s",
+                        (server_id, timestamp))
+            cur.execute("DELETE FROM nx_stream_frames WHERE server=%s AND updated<%s",
+                        (server_id, timestamp - 20))
+            cur.execute("SELECT actor,target,player_session FROM nx_stream_viewers "
+                        "WHERE server=%s AND viewer=%s", (server_id, payload.viewerId))
+            existing = cur.fetchone()
+            if payload.operation == "start":
+                require(not existing or
+                        (str(existing["actor"]) == str(user["user_id"])
+                         and existing["target"] == payload.target
+                         and existing["player_session"] == payload.session),
+                        409, "This stream tile belongs to a different watch session.")
+                if not existing:
+                    cur.execute("SELECT count(*) AS total FROM nx_stream_viewers "
+                                "WHERE server=%s AND expires>%s", (server_id, timestamp))
+                    require(int(cur.fetchone()["total"]) < 8, 409,
+                            "This server already has the maximum of 8 live views.")
+                    cur.execute("SELECT count(*) AS total FROM nx_stream_viewers "
+                                "WHERE server=%s AND actor=%s AND expires>%s",
+                                (server_id, user["user_id"], timestamp))
+                    require(int(cur.fetchone()["total"]) < 4, 409,
+                            "You can watch at most 4 players at once.")
+                cur.execute(
+                    """INSERT INTO nx_stream_viewers
+                       (server,viewer,actor,target,player_session,expires)
+                       VALUES(%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT(server,viewer) DO UPDATE SET expires=EXCLUDED.expires""",
+                    # The first command may wait for the bridge's next sync.
+                    # Once the page starts polling it renews this to 15 seconds.
+                    (server_id, payload.viewerId, user["user_id"], payload.target,
+                     payload.session, timestamp + 60),
+                )
+            else:
+                require(existing and str(existing["actor"]) == str(user["user_id"]), 404,
+                        "That live-view session is no longer yours.")
+                cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND viewer=%s",
+                            (server_id, payload.viewerId))
+
+        cur.execute(
+            "INSERT INTO nx_commands(id,server,actor,actor_name,body,created,expires) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s)",
+            (command_id, server_id, user["user_id"], user["name"],
+             db.jsonb(payload.model_dump(mode="json")), timestamp, timestamp + 60),
+        )
     audit(user, "command." + kind, str(server["name"]) + " / " + command_id)
     return reply({"id": command_id, "status": "pending"}, 202)
+
+
+@router.post("/servers/{server_id}/streams/frames")
+async def stream_frames(request: Request, server_id: str):
+    origin_check(request)
+    user = authenticated(request)
+    require(user["role"] in ("owner", "administrator"), 403,
+            "Only owners and administrators can view live player screens.")
+    server = _server_of(user, server_id)
+    require(_online(server["last_seen"]), 409, "Server is offline.")
+    db.ensure_schema()
+    rate("stream-view:" + str(user["user_id"]), 90, 60)
+    payload = StreamFramesRequest(**await json_body(request, 12_000))
+    timestamp = now()
+    snapshot = server.get("snapshot") or {}
+    players = {int(player.get("src") or 0): player
+               for player in snapshot.get("players", [])}
+    frames = []
+    with db.transaction() as cur:
+        for viewer in payload.streams:
+            cur.execute(
+                """SELECT player_session,capture_session FROM nx_stream_viewers
+                   WHERE server=%s AND viewer=%s AND actor=%s AND target=%s AND expires>%s""",
+                (server_id, viewer.viewerId, user["user_id"], viewer.target, timestamp),
+            )
+            lease = cur.fetchone()
+            player = players.get(viewer.target)
+            if not lease or lease["player_session"] != viewer.session or not player or \
+                    player.get("sessionKey") != viewer.session:
+                if lease:
+                    cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND viewer=%s",
+                                (server_id, viewer.viewerId))
+                frames.append({"viewerId": viewer.viewerId, "active": False})
+                continue
+
+            cur.execute("UPDATE nx_stream_viewers SET expires=%s WHERE server=%s AND viewer=%s",
+                        (timestamp + 15, server_id, viewer.viewerId))
+            frame = None
+            if lease["capture_session"]:
+                cur.execute(
+                    """SELECT frame_seq,data,updated FROM nx_stream_frames
+                       WHERE server=%s AND target=%s AND updated>%s AND capture_session=%s""",
+                    (server_id, viewer.target, timestamp - 10, lease["capture_session"]),
+                )
+                frame = cur.fetchone()
+            frames.append({
+                "viewerId": viewer.viewerId, "active": True,
+                "sequence": int(frame["frame_seq"]) if frame else 0,
+                "updated": int(frame["updated"]) if frame else 0,
+                "data": frame["data"] if frame else None,
+            })
+    return reply({"frames": frames})
 
 
 @router.get("/servers/{server_id}/media/{evidence_id}/{slot}")

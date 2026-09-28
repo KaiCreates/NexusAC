@@ -31,6 +31,8 @@ REQUIRED_TABLES = (
     "nx_identity_marks",
     "nx_events",
     "nx_punishments",
+    "nx_stream_viewers",
+    "nx_stream_frames",
 )
 
 

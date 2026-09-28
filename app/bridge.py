@@ -16,7 +16,10 @@ import re
 from fastapi import Request
 
 from . import db
-from .protocol import MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MediaRequest, SyncRequest
+from .protocol import (
+    MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MAX_STREAM_FRAME_BYTES,
+    MediaRequest, StreamFrameRequest, StreamStartRequest, SyncRequest,
+)
 from .security import HttpError, rate, reply, require, sha256, now
 
 log = logging.getLogger("nexusac.bridge")
@@ -41,18 +44,18 @@ async def json_body(request: Request, maximum: int) -> dict:
         raise HttpError(400, "Invalid JSON.")
 
 
-def server_for(request: Request) -> dict:
+def server_for(request: Request, limit: int = 100) -> dict:
     match = BEARER.match(request.headers.get("authorization", "") or "")
     require(match, 401, "A server API key is required.")
     server = db.one("SELECT * FROM nx_servers WHERE token_hash=%s", (sha256(match.group(1)),))
     require(server, 401, "Invalid or revoked server API key.")
-    rate(f"bridge:{server['id']}", 100, 60)
+    rate(f"bridge:{server['id']}", limit, 60)
     return server  # type: ignore[return-value]
 
 
 async def handle(request: Request, action: str):
     require(request.method == "POST", 405, "POST required.")
-    server = server_for(request)
+    server = server_for(request, 600 if action == "stream" else 100)
     server_id = str(server["id"])
 
     if action == "ping":
@@ -89,6 +92,10 @@ async def handle(request: Request, action: str):
         })
     if action == "media":
         return await _media(request, server_id)
+    if action == "stream-start":
+        return await _stream_start(request, server, server_id)
+    if action == "stream":
+        return await _stream(request, server, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
     try:
         return await _sync(request, server, server_id)
@@ -125,6 +132,88 @@ async def _media(request: Request, server_id: str):
         (server_id, payload.evidenceId, payload.slot, payload.data, now()),
     )
     return reply({"ok": True})
+
+
+def _player_session_matches(server: dict, target: int, player_session: str) -> bool:
+    snapshot = server.get("snapshot") or {}
+    return any(int(player.get("src") or 0) == target
+               and player.get("sessionKey") == player_session
+               for player in snapshot.get("players", []))
+
+
+async def _stream_start(request: Request, server: dict, server_id: str):
+    from .protocol import StreamStartRequest
+
+    payload = StreamStartRequest(**await json_body(request, 4096))
+    if not _player_session_matches(server, payload.target, payload.playerSession):
+        return reply({"ok": True, "active": False})
+    db.ensure_schema()
+    timestamp = now()
+    with db.transaction() as cur:
+        cur.execute(
+            """UPDATE nx_stream_viewers SET capture_session=%s
+               WHERE server=%s AND target=%s AND player_session=%s AND expires>%s""",
+            (payload.captureSession, server_id, payload.target, payload.playerSession,
+             timestamp),
+        )
+        cur.execute(
+            """SELECT 1 FROM nx_stream_viewers
+               WHERE server=%s AND target=%s AND player_session=%s AND expires>%s
+                 AND capture_session=%s LIMIT 1""",
+            (server_id, payload.target, payload.playerSession, timestamp, payload.captureSession),
+        )
+        active = cur.fetchone() is not None
+    return reply({"ok": True, "active": active})
+
+
+async def _stream(request: Request, server: dict, server_id: str):
+    from .protocol import StreamFrameRequest
+
+    payload = StreamFrameRequest(**await json_body(request, MAX_STREAM_FRAME_BYTES + 8192))
+    try:
+        encoded = payload.data.split(",", 1)[1]
+        image = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, IndexError):
+        raise HttpError(400, "Stream frame is not valid base64.")
+    require(len(image) >= 3 and image[:3] == b"\xff\xd8\xff", 400,
+            "Stream frame is not a JPEG.")
+    if not _player_session_matches(server, payload.target, payload.playerSession):
+        return reply({"ok": True, "active": False})
+
+    db.ensure_schema()
+    timestamp = now()
+    with db.transaction() as cur:
+        cur.execute(
+            """UPDATE nx_stream_viewers SET capture_session=%s
+               WHERE server=%s AND target=%s AND player_session=%s AND expires>%s
+                 AND capture_session IS NULL""",
+            (payload.captureSession, server_id, payload.target, payload.playerSession, timestamp),
+        )
+        cur.execute(
+            """SELECT 1 FROM nx_stream_viewers
+               WHERE server=%s AND target=%s AND player_session=%s AND capture_session=%s
+                 AND expires>%s LIMIT 1""",
+            (server_id, payload.target, payload.playerSession, payload.captureSession, timestamp),
+        )
+        if cur.fetchone() is None:
+            cur.execute("DELETE FROM nx_stream_frames "
+                        "WHERE server=%s AND target=%s AND capture_session=%s",
+                        (server_id, payload.target, payload.captureSession))
+            return reply({"ok": True, "active": False})
+
+        cur.execute(
+            """INSERT INTO nx_stream_frames(server,target,capture_session,frame_seq,data,updated)
+               VALUES(%s,%s,%s,%s,%s,%s)
+               ON CONFLICT(server,target) DO UPDATE SET
+                 capture_session=EXCLUDED.capture_session, frame_seq=EXCLUDED.frame_seq,
+                 data=EXCLUDED.data, updated=EXCLUDED.updated
+               WHERE (nx_stream_frames.capture_session=EXCLUDED.capture_session
+                      AND EXCLUDED.frame_seq>nx_stream_frames.frame_seq)
+                  OR nx_stream_frames.capture_session<>EXCLUDED.capture_session""",
+            (server_id, payload.target, payload.captureSession, payload.sequence,
+             payload.data, timestamp),
+        )
+    return reply({"ok": True, "active": True})
 
 
 def _store_identities(cur, server: dict, server_id: str, block: dict) -> int:
@@ -348,6 +437,13 @@ async def _sync(request: Request, server: dict, server_id: str):
         current = cur.fetchone()
         require(current, 401, "Server API key was rotated.")
 
+        # Live screen data is a replace-in-place cache, not evidence. Keep only
+        # recent frames and leases while this server is checking in.
+        cur.execute("DELETE FROM nx_stream_frames WHERE server=%s AND updated<%s",
+                    (server_id, now() - 20))
+        cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND expires<=%s",
+                    (server_id, now()))
+
         if current["boot"] == payload.boot:
             require(
                 payload.sequence > int(current["sequence"]),
@@ -397,9 +493,15 @@ async def _sync(request: Request, server: dict, server_id: str):
             status = "uncertain" if ack.uncertain else ("succeeded" if ack.ok else "failed")
             cur.execute(
                 """UPDATE nx_commands SET status=%s, result=%s, ack_at=%s
-                    WHERE id=%s AND server=%s AND status IN ('sent','expired')""",
+                    WHERE id=%s AND server=%s AND status IN ('sent','expired') RETURNING body""",
                 (status, ack.message, now(), ack.id, server_id),
             )
+            completed = cur.fetchone()
+            command = (completed or {}).get("body") or {}
+            if (command.get("type") == "stream" and command.get("operation") == "start"
+                    and not ack.ok and not ack.uncertain):
+                cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND viewer=%s",
+                            (server_id, command.get("viewerId")))
 
         cur.execute(
             """UPDATE nx_commands

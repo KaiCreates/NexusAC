@@ -1,0 +1,46 @@
+NexusAC Website Multi-Stream Plan
+================================
+
+Goal
+----
+Let authorized website staff watch several live player screen feeds at once,
+reusing the existing Nex/Nexus-Screens JPEG capture path without sending frames
+inside reliable FiveM events or polluting the normal snapshot payload.
+
+Current findings
+----------------
+- Nexus-Screens already supports up to 8 server-wide JPEG streams.
+- Nex already supports up to 4 watched players per in-game admin and fans a
+  single target capture out to its viewers.
+- Nex frames currently go only to the in-game panel. The website has no live
+  frame endpoint or multi-stream UI.
+- The capture path is image-only. It has no audio capture/transport code.
+
+Implementation sequence
+-----------------------
+1. Define a bounded, expiring latest-frame cache keyed by server, player and
+   stream session. Keep it out of durable evidence storage and out of snapshots.
+2. Add an API-key-authenticated server bridge for JPEG frames and an
+   authenticated, role-checked website endpoint for reading the latest frame.
+   Validate session, source, JPEG signature, byte size, rate and expiry.
+3. Add explicit website start/stop/lease commands, actor auditing, player
+   session checks, and a dashboard multi-view grid with per-tile stop controls.
+   Reuse the existing latent Nex capture path; cap the website's bandwidth and
+   active target count to avoid reliable-event overflow and unbounded load.
+4. Forward frames to the bridge on a throttled cadence; expire cache entries
+   and stop client captures when the last website viewer lease expires.
+5. Add tests for authorization, stale sessions, malformed/oversized frames,
+   expiry, limits, and dashboard interactions; run Lua, Python and JS checks.
+
+Audio boundary
+--------------
+Do not present a working audio control until there is an actual supported
+capture source and transport. If an audio capture resource is supplied, its
+website playback must be opt-in per player, visibly indicated to that player,
+and auditable. No hidden microphone or voice-chat capture will be introduced.
+
+Deployment
+----------
+Website schema migration and app changes must be deployed together. NexusAC
+and Nexus-Screens updates require resource restarts. Do not push/deploy without
+explicit instruction.
