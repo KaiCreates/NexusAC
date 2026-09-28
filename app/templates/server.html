@@ -31,6 +31,7 @@
       <button class="sidebar-link" data-tab="Webhooks">{{ ui.icon('plug') }} <span>Webhooks</span></button>
       <button class="sidebar-link" data-tab="Integrations">{{ ui.icon('grid') }} <span>Integrations</span></button>
       <button class="sidebar-link" data-tab="Logs">{{ ui.icon('log') }} <span>Logs</span></button>
+      <button class="sidebar-link" data-tab="ResourceLogs">{{ ui.icon('server') }} <span>Resource Logs</span></button>
       <button class="sidebar-link" data-tab="Items">{{ ui.icon('log') }} <span>Whitelisted / Blacklisted</span></button>
       <button class="sidebar-link" data-tab="Cleanup">{{ ui.icon('braces') }} <span>Cleanup</span></button>
       <button class="sidebar-link" data-tab="Configuration">{{ ui.icon('sliders') }} <span>Configuration</span></button>
@@ -77,7 +78,7 @@ const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
               'Activity', 'Identities', 'Screenshots', 'Protection', 'Webhooks',
-              'Integrations', 'Logs', 'Items', 'Cleanup', 'Configuration'];
+              'Integrations', 'Logs', 'ResourceLogs', 'Items', 'Cleanup', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
 let data = null;
@@ -88,6 +89,8 @@ const pendingChanges = new Map();
 const webhookDrafts = {};
 const fieldDrafts = {};
 const protectionDrafts = {};
+let resourceEventQuery = '';
+let resourceEventPage = 0;
 
 function changeKey(body) {
   if (body.type === 'setting') return 'setting:' + body.path;
@@ -1571,6 +1574,68 @@ function viewConfig() {
     (editable ? '' : '<p class="panel-note">Your role can view configuration but not change it.</p>') + drawer;
 }
 
+function viewResourceLogs() {
+  const snap = data.snapshot || {};
+  const inventory = snap.resources || {};
+  const resources = inventory.resources || [];
+  const events = inventory.events || [];
+  const resourceLogs = (snap.logs || []).filter((entry) =>
+    (entry.category || entry.group || '').toLowerCase() === 'resources');
+  const started = resources.filter((r) => r.state === 'started').length;
+  const stopped = resources.length - started;
+
+  const resourceRows = resources.map((r) => '<tr><td><b>' + escapeHtml(r.name) + '</b></td>' +
+    '<td><span class="badge ' + (r.state === 'started' ? 'success' : '') + '">' +
+      escapeHtml(r.state || 'unknown') + '</span></td><td>' + escapeHtml(r.version || '—') + '</td>' +
+    '<td>' + escapeHtml(r.author || '—') + '</td><td class="muted">' +
+      escapeHtml(short(r.description || 'No manifest description', 90)) + '</td></tr>');
+  const matchingEvents = events.filter((e) => !resourceEventQuery ||
+    (String(e.name) + ' ' + String(e.resource)).toLowerCase().includes(resourceEventQuery.toLowerCase()));
+  const eventPageSize = 100;
+  const eventPageCount = Math.max(1, Math.ceil(matchingEvents.length / eventPageSize));
+  resourceEventPage = Math.min(resourceEventPage, eventPageCount - 1);
+  const eventRows = matchingEvents.slice(resourceEventPage * eventPageSize,
+    (resourceEventPage + 1) * eventPageSize).map((e) => '<tr><td class="mono">' + escapeHtml(e.name) + '</td>' +
+    '<td>' + escapeHtml(e.resource) + '</td></tr>');
+  const logRows = resourceLogs.map((entry) => {
+    const detail = (entry.fields || []).map((f) => Array.isArray(f)
+      ? String(f[0] || '') + ': ' + String(f[1] || '') : '').filter(Boolean).join(' · ');
+    return '<tr><td class="muted">' + escapeHtml(ago(entry.at, data.serverTime)) +
+      '</td><td><span class="badge">' + escapeHtml(entry.category || 'resources') +
+      '</span></td><td><b>' + escapeHtml(short(entry.title, 90)) + '</b>' +
+      (detail ? '<div class="muted">' + escapeHtml(short(detail, 180)) + '</div>' : '') +
+      '</td><td class="muted">' + escapeHtml(entry.player || '—') + '</td></tr>';
+  });
+
+  const refreshed = inventory.at ? new Date(inventory.at * 1000).toLocaleString() : 'waiting for server data';
+  const noteText = 'Event names are declarations found in server-side resource files. They show where an event is registered, not live invocations or proof of what a client resource initiated.';
+  const tile = (glyph, value, label) => '<div class="ov-mini"><span>' + icon(glyph, 20) +
+    '</span><div><strong>' + escapeHtml(String(value)) + '</strong><small>' + escapeHtml(label) + '</small></div></div>';
+  return offlineNote() + '<div class="pc-toolbar"><div><span class="eyebrow">SERVER OBSERVABILITY</span>' +
+    '<h2>Resource Logs</h2><p>Resource inventory, declared server events, and resource lifecycle/audit records.</p></div></div>' +
+    '<div class="ov-minis resource-log-stats">' +
+      tile('server', inventory.resourceTotal || resources.length,
+        started + ' started · ' + stopped + ' other state' + (inventory.resourcesTruncated ? ' · list capped' : '')) +
+      tile('braces', inventory.eventTotal || events.length, inventory.eventsTruncated ? 'Event list capped at 2,000' : 'Declared server events') +
+      tile('activity', resourceLogs.length, 'Recent resource records') + '</div>' +
+    '<p class="panel-note">' + escapeHtml(noteText) + ' · Inventory refreshed ' + escapeHtml(refreshed) + '.</p>' +
+    panel('Installed resources', table(['Resource', 'State', 'Version', 'Author', 'Description'], resourceRows,
+      'No resource inventory received', 'Restart/report the NexusAC resource to populate this list.')) +
+    panel('Declared server events', '<div class="filter-row"><input class="cfg-input" id="resource-event-search" value="' +
+      escapeHtml(resourceEventQuery) + '" placeholder="Filter event or resource name…">' +
+      '<button class="button small" data-resource-event-search>Search</button></div>' +
+      table(['Event name', 'Owning resource'], eventRows,
+        'No declared events indexed', 'The source index refreshes periodically from installed server resource files.') +
+      '<div class="button-row" style="justify-content:space-between"><span class="muted">Showing ' +
+      (matchingEvents.length ? (resourceEventPage * eventPageSize + 1) + '–' + Math.min((resourceEventPage + 1) * eventPageSize, matchingEvents.length) : '0') +
+      ' of ' + matchingEvents.length + ' indexed events</span><span>' +
+      '<button class="button small" data-resource-event-page="-1"' + (resourceEventPage <= 0 ? ' disabled' : '') + '>Previous</button> ' +
+      '<button class="button small" data-resource-event-page="1"' + (resourceEventPage >= eventPageCount - 1 ? ' disabled' : '') + '>Next</button>' +
+      '</span></div>') +
+    panel('Resource activity', table(['When', 'Category', 'Record', 'Player'], logRows,
+      'No resource activity recorded', 'Resource starts, stops, restarts, and audit summaries appear here.'));
+}
+
 /* Weapon policy gets a dedicated view because operators add and remove single
    paintball/loadout entries far more often than they edit the rest of the AC.
    It still uses the same schema-whitelisted, audited `setting` command path. */
@@ -1676,7 +1741,7 @@ const VIEWS = {
   Activity: viewActivity, Identities: viewIdentities,
   Screenshots: viewScreenshots, Protection: viewProtection,
   Webhooks: viewWebhooks, Integrations: viewIntegrations,
-  Logs: viewLogs, Items: viewItems, Cleanup: viewCleanup, Configuration: viewConfig,
+  Logs: viewLogs, ResourceLogs: viewResourceLogs, Items: viewItems, Cleanup: viewCleanup, Configuration: viewConfig,
 };
 
 /* --------------------------------------------------------------- render */
@@ -1849,6 +1914,16 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  const eventPage = event.target.closest('[data-resource-event-page]');
+  if (eventPage) {
+    resourceEventPage = Math.max(0, resourceEventPage + Number(eventPage.dataset.resourceEventPage || 0));
+    return render();
+  }
+  if (event.target.closest('[data-resource-event-search]')) {
+    resourceEventQuery = document.getElementById('resource-event-search')?.value.trim() || '';
+    resourceEventPage = 0;
+    return render();
+  }
   if (event.target.closest('[data-punish-toggle]')) {
     advancedPunishOpen = !advancedPunishOpen;
     render();

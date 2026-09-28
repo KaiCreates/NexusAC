@@ -170,6 +170,9 @@ class Snapshot(BaseModel):
     bans: Rows = Field(default_factory=list)
     feed: Rows = Field(default_factory=list)
     logs: Rows = Field(default_factory=list)
+    # Bounded server resource inventory and source-scanned event declarations.
+    # These are metadata, not a trace of every runtime event invocation.
+    resources: dict[str, Any] = Field(default_factory=dict)
     config: ConfigBlock = Field(default_factory=ConfigBlock)
     events: Any = None
     integrations: Any = None
