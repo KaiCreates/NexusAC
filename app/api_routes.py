@@ -721,9 +721,9 @@ async def stream_frames(request: Request, server_id: str):
     server = _server_of(user, server_id)
     require(_online(server["last_seen"]), 409, "Server is offline.")
     db.ensure_schema()
-    # Batched requests can poll the full four-tile view at 2 Hz. This is a
+    # Batched requests can poll the full four-tile view at 4 Hz. This is a
     # dedicated limit and does not affect the dashboard's ordinary API budget.
-    rate("stream-view:" + str(user["user_id"]), 150, 60)
+    rate("stream-view:" + str(user["user_id"]), 270, 60)
     payload = StreamFramesRequest(**await json_body(request, 12_000))
     timestamp = now()
     snapshot = server.get("snapshot") or {}

@@ -1614,13 +1614,13 @@ function viewMultiStream() {
       '<button class="button small" data-stream-stop="' + escapeHtml(stream.viewerId) + '">Stop</button></header>' +
       '<div class="stream-frame">' + (stream.frame
         ? '<img data-stream-frame="' + escapeHtml(stream.viewerId) + '" src="' + stream.frame + '" alt="Live screen for ' + escapeHtml(stream.name) + '">'
-        : '<div class="stream-placeholder"><span class="pulse-dot"></span><b>Waiting for first frame</b><small>The player is notified when viewing starts.</small></div>') +
-      '</div><footer><span class="badge">LIVE JPEG</span><span class="muted">Audio unavailable — this capture source sends no audio.</span></footer></article>').join('');
+        : '<div class="stream-placeholder"><span class="pulse-dot"></span><b>Waiting for first frame</b><small>Connecting to the live feed…</small></div>') +
+      '</div><footer><span class="badge">LIVE JPEG</span></footer></article>').join('');
 
   return '<div class="pc-toolbar"><div><span class="eyebrow">LIVE PLAYER REVIEW</span>' +
     '<h2>Multi-Stream</h2><p>On-demand views for large servers: at most four per staff member and eight per server. Only selected players are captured.</p></div>' +
     '<span class="badge">' + multiStreams.size + ' / 4 active</span></div>' +
-    '<div class="notice">Optimized JPEG feed: up to 2 FPS at 640px wide, depending on capture and connection speed. This is not 30/60 FPS video. No audio is captured.</div>' +
+    '<div class="notice">Lightweight WebP feed (JPEG fallback): best effort up to 4 FPS at 640px wide, depending on capture and connection speed. This is not 30/60 FPS video.</div>' +
     (!allowed ? '<div class="notice bad">Only workspace owners and administrators can view player screens.</div>' : '') +
     (!available ? '<div class="notice warning">The server is offline or Nexus-Screens is not running.</div>' : '') +
     panel('Online players', table(['Player', 'Server ID', 'Ping', ''], picker,
@@ -1975,7 +1975,7 @@ document.addEventListener('click', async (event) => {
     const player = playerOf(streamWatch.dataset.streamWatch);
     if (!player || !player.sessionKey) return note(msg, 'That player session changed. Refresh the player list.', 'bad');
     if (multiStreams.size >= 4) return note(msg, 'You can watch at most four players at once.', 'bad');
-    if (!confirm('Start a live screen view of ' + player.name + '? They will receive a visible notice. Audio is not captured.')) return;
+    if (!confirm('Start a live screen view of ' + player.name + '?')) return;
     const viewerId = crypto.randomUUID();
     streamWatch.disabled = true;
     const result = await api('/servers/' + SERVER + '/commands', {
@@ -1988,7 +1988,7 @@ document.addEventListener('click', async (event) => {
     }
     multiStreams.set(viewerId, { viewerId, target: player.src, session: player.sessionKey,
       name: player.name || 'Player ' + player.src, frame: '', sequence: 0, status: 'Starting…' });
-    note(msg, 'Stream request queued. The player will be notified.', 'warning');
+    note(msg, 'Stream request queued.', 'success');
     return render();
   }
   const streamStop = event.target.closest('[data-stream-stop]');
@@ -2541,7 +2541,7 @@ async function pollMultiStreams() {
   }
   if (changed) render();
 }
-setInterval(pollMultiStreams, 500);
+setInterval(pollMultiStreams, 250);
 
 document.addEventListener('input', (event) => {
   if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {

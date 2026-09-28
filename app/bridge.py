@@ -175,8 +175,10 @@ async def _stream(request: Request, server: dict, server_id: str):
         image = base64.b64decode(encoded, validate=True)
     except (binascii.Error, IndexError):
         raise HttpError(400, "Stream frame is not valid base64.")
-    require(len(image) >= 3 and image[:3] == b"\xff\xd8\xff", 400,
-            "Stream frame is not a JPEG.")
+    is_jpeg = payload.data.startswith("data:image/jpeg;") and image.startswith(b"\xff\xd8\xff")
+    is_webp = (payload.data.startswith("data:image/webp;") and len(image) >= 12
+               and image[:4] == b"RIFF" and image[8:12] == b"WEBP")
+    require(is_jpeg or is_webp, 400, "Stream frame is not a valid JPEG or WebP image.")
     if not _player_session_matches(server, payload.target, payload.playerSession):
         return reply({"ok": True, "active": False})
 

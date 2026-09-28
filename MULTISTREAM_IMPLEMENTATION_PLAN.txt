@@ -59,3 +59,23 @@ Performance follow-up (JPEG transport ceiling)
    separately; repeated JPEG over FiveM events + HTTP/database polling is not
    a suitable real-time media transport. Do not claim that this JPEG tuning
    yields video-grade FPS or audio.
+
+Stutter / notice follow-up
+--------------------------
+1. Trace capture -> latent transfer -> server validation -> cloud relay. Add a
+   per-frame server acknowledgment so the client does not capture/send again
+   while the previous latent event is still in flight; use a timeout to recover
+   from a lost acknowledgment without creating a backlog.
+2. Preserve the single-in-flight cloud relay guard and drop intermediate frames
+   when the bridge is slow (latest-frame semantics, not an accumulating queue).
+3. Remove the per-view player toast and audio-status wording as requested;
+   retain server-side authorization and command auditing. Server operators
+   remain responsible for disclosing monitoring in their rules/terms.
+4. Validate Nexus-Screens JavaScript and NexusAC Lua syntax/tests. Confirm no
+   audio-capture behavior was introduced.
+5. Reduce the remaining configured inter-frame and browser-poll intervals to
+   250 ms, accept WebP with JPEG fallback, raise only the dedicated stream-view
+   API rate limit accordingly, and preserve the eight-stream server cap.
+   Describe this as best-effort ~4 FPS.
+6. Do not route Mumble voice into the website stream without an explicit
+   player-visible opt-in and a separate authenticated, auditable audio path.

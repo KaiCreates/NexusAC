@@ -220,7 +220,7 @@ class StreamStartRequest(BaseModel):
 class StreamFrameRequest(StreamStartRequest):
     sequence: Annotated[int, Field(gt=0)]
     data: Annotated[str, Field(max_length=MAX_STREAM_FRAME_BYTES,
-                               pattern=r"^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$")]
+                               pattern=r"^data:image/(?:jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$")]
 
 
 # --------------------------------------------------------------------------- #
