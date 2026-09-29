@@ -4715,3 +4715,18 @@ th.ev-cols button:hover { color: #f5f5f5; }
 .stream-placeholder small{color:#8a8c94}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#7be6b0;box-shadow:0 0 13px #7be6b0;animation:streamPulse 1.6s infinite}
 @keyframes streamPulse{50%{opacity:.35;box-shadow:0 0 3px #7be6b0}}
 @media(max-width:800px){.stream-grid{grid-template-columns:1fr}}
+
+/* Disconnects page */
+.dc-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:0 0 16px}
+.dc-tile{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:inherit;text-align:left;cursor:pointer;font:inherit}
+.dc-tile span{font-size:12px;color:var(--muted)}.dc-tile b{font-size:22px;font-weight:500;font-variant-numeric:tabular-nums}
+.dc-tile.active{border-color:#e6e7ea55;background:#ffffff08}
+.dc-row{cursor:pointer}.dc-detail td{background:#ffffff04}
+.dc-detail dl{display:grid;grid-template-columns:minmax(140px,max-content) 1fr;gap:6px 18px;margin:4px 0;font-size:12.5px}
+.dc-detail dt{color:var(--muted)}.dc-detail dd{margin:0;overflow-wrap:anywhere}
+
+/* Detector health (Detectors page) */
+.pc-health { color: var(--muted, #8a93a6); }
+.pc-health.spike { color: #ff6b5b; font-weight: 600; }
+.pc-facts.pc-spike { border-left: 3px solid #ff6b5b; padding-left: 10px; }
+.pc-facts.pc-spike h4 { color: #ff6b5b; }

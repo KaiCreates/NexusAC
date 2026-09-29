@@ -22,6 +22,7 @@
         <span class="count" id="count-evidence"></span></button>
       <span class="nav-group">ANALYTICS</span>
       <button class="sidebar-link" data-tab="Activity">{{ ui.icon('activity') }} <span>Activity</span></button>
+      <button class="sidebar-link" data-tab="Disconnects">{{ ui.icon('logout') }} <span>Disconnects</span></button>
       <button class="sidebar-link" data-tab="Identities">{{ ui.icon('radar') }} <span>Identities</span></button>
       <span class="nav-group">MEDIA</span>
       <button class="sidebar-link" data-tab="Screenshots">{{ ui.icon('image') }} <span>Screenshots</span>
@@ -78,7 +79,7 @@
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
 const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
-              'Activity', 'Identities', 'Screenshots', 'Multi-Stream', 'Protection', 'Webhooks',
+              'Activity', 'Disconnects', 'Identities', 'Screenshots', 'Multi-Stream', 'Protection', 'Webhooks',
               'Integrations', 'Logs', 'ResourceLogs', 'Items', 'Cleanup', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
 let live = true;
@@ -674,7 +675,33 @@ function protectionFacts(p) {
         '<dt>' + escapeHtml(k) + '</dt><dd>' + escapeHtml(typeof v === 'number' ? num(v) : String(v)) +
         '</dd>').join('') + '</dl></div>'
     : '';
-  return block('Live counters', flat(p.stats)) + block('Thresholds', flat(p.thresholds));
+  return protectionHealthBlock(p) + block('Live counters', flat(p.stats)) + block('Thresholds', flat(p.thresholds));
+}
+/* Detector health: how many different players this detector flagged today,
+   out of everyone who played. A false positive shows up here first, as a
+   detector that suddenly flags far more players than it usually does. */
+function protectionHealthLine(p) {
+  const h = p.health;
+  if (!h || !h.flags) return '';
+  return ' · <span class="pc-health' + (h.spike ? ' spike' : '') + '" title="' +
+    escapeHtml(num(h.flags) + ' flags today; usual: ' + (h.avgPlayers == null ? 'no history yet' : num(h.avgPlayers) + ' players/day')) + '">' +
+    (h.spike ? '⚠ spike · ' : '') + num(h.players) + (h.players === 1 ? ' player' : ' players') +
+    ' today (' + num(h.share) + '%)</span>';
+}
+function protectionHealthBlock(p) {
+  const h = p.health;
+  if (!h) return '';
+  const rows = [
+    ['Flags today', num(h.flags)],
+    ['Players flagged today', num(h.players)],
+    ['Share of players today', num(h.share) + '%'],
+    ['Players online today', num(h.population)],
+    ['Usual players per day', h.avgPlayers == null ? 'no history yet' : num(h.avgPlayers)],
+  ];
+  return '<div class="pc-facts' + (h.spike ? ' pc-spike' : '') + '"><h4>Health' +
+    (h.spike ? ' — spike: far more players than usual, check for false positives' : '') + '</h4><dl>' +
+    rows.map(([k, v]) => '<dt>' + escapeHtml(k) + '</dt><dd>' + escapeHtml(String(v)) + '</dd>').join('') +
+    '</dl></div>';
 }
 function protectionFields(p) {
   return { enabled: p.enabled, profile: p.profile, action: p.action,
@@ -698,7 +725,7 @@ function viewDetectors() {
         escapeHtml(p.name) + '">' + icon('shield-check', 16) + '</button>' +
         '<div class="pc-label"><b>' + escapeHtml(p.name) + '</b><small>' +
         escapeHtml(p.mode || 'enforce') + ' · ' + escapeHtml(p.profile) + ' · ' + escapeHtml(p.action) + ' at ' + num(p.minConfidence) +
-        '% confidence</small></div><button class="pc-config" data-protection-open="' + escapeHtml(p.id) +
+        '% confidence' + protectionHealthLine(p) + '</small></div><button class="pc-config" data-protection-open="' + escapeHtml(p.id) +
         '" aria-label="Configure ' + escapeHtml(p.name) + '">' + icon('sliders', 17) + '</button>' +
         '<button class="pc-switch ' + (p.enabled ? 'on' : '') + '" data-protection-toggle="' +
         escapeHtml(p.id) + '" aria-label="Toggle ' + escapeHtml(p.name) + '" aria-pressed="' +
@@ -1037,6 +1064,125 @@ async function loadActivity() {
   if (!result.ok) return note(msg, result.error, 'bad');
   research.events = result.data.rows || [];
   if (tab === 'Activity') document.getElementById('view').innerHTML = viewActivity();
+}
+
+/* ---- Disconnects: why players left the city.
+
+   Reads its own endpoint (like Activity), refreshed every 15 s while open.
+   Classification is done on the website so older rows, which only carry the
+   game's reason text, are read the same way as new ones. */
+const drops = { data: null, key: '', timer: null, window: '24h', category: 'all', q: '', open: null };
+const DROP_TONE = { crash: 'danger', timeout: 'warning', network: 'warning', kick: 'warning',
+                    ban: 'danger', quit: '', server: '', resource: 'warning', other: '' };
+
+function fmtDuration(sec) {
+  if (sec === undefined || sec === null) return '—';
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h ? h + 'h ' + m + 'm' : m ? m + 'm' : sec + 's';
+}
+function clock(at) {
+  const d = new Date((at || 0) * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function viewDisconnects() {
+  if (!drops.timer) drops.timer = setInterval(() => { if (tab === 'Disconnects') loadDisconnects(); }, 15000);
+  if (drops.key !== drops.window || !drops.data) mount(loadDisconnects);
+  const d = drops.data;
+  const labels = (d && d.labels) || {};
+  const totals = (d && d.totals) || {};
+
+  const tiles = '<div class="dc-tiles">' + ['all', 'crash', 'timeout', 'network', 'quit', 'kick', 'ban', 'server', 'resource', 'other']
+    .map((k) => {
+      const n = k === 'all' ? (d ? d.total : 0) : (totals[k] || 0);
+      return '<button class="dc-tile' + (drops.category === k ? ' active' : '') + '" data-dc-cat="' + k + '">' +
+        '<span>' + escapeHtml(k === 'all' ? 'All disconnects' : (labels[k] || k)) + '</span><b>' + num(n) + '</b></button>';
+    }).join('') + '</div>';
+
+  const clusters = ((d && d.clusters) || []).map((c) =>
+    '<tr class="' + (c.verdict === 'possible crash attack' ? 'hot' : c.verdict.startsWith('mass') ? 'flag' : '') + '">' +
+    '<td class="mono muted">' + clock(c.start) + '</td>' +
+    '<td><b>' + escapeHtml(c.verdict) + '</b>' + (c.near ? ' <span class="badge danger">close together</span>' : '') + '</td>' +
+    '<td>' + num(c.count) + ' in ' + num(c.end - c.start + 1) + 's</td>' +
+    '<td class="muted">' + Object.entries(c.categories || {}).map(([k, v]) => escapeHtml(labels[k] || k) + ' ' + v).join(' · ') + '</td>' +
+    '<td class="muted">' + escapeHtml(short((c.players || []).join(', '), 70)) + '</td></tr>');
+
+  const sigs = ((d && d.signatures) || []).map((s) =>
+    '<tr class="' + (s.playerCount >= 3 ? 'hot' : s.playerCount >= 2 ? 'flag' : '') + '">' +
+    '<td class="mono" title="' + escapeHtml(s.signature) + '">' + escapeHtml(short(s.signature, 70)) + '</td>' +
+    '<td>' + num(s.count) + '</td><td>' + num(s.playerCount) + '</td>' +
+    '<td class="muted">' + escapeHtml(short((s.players || []).join(', '), 60)) + '</td>' +
+    '<td class="muted">' + escapeHtml(ago(s.last, data.serverTime)) + '</td></tr>');
+
+  const q = drops.q.toLowerCase();
+  const list = ((d && d.rows) || []).filter((r) =>
+    (drops.category === 'all' || r.category === drops.category) &&
+    (!q || String(r.senderName || '').toLowerCase().includes(q) || String((r.data || {}).reason || '').toLowerCase().includes(q)));
+  const rows = list.map((r) => {
+    const x = r.data || {};
+    const chips = [];
+    if (r.by === 'nexus') chips.push('<span class="badge danger">by NexusAC</span>');
+    if (r.by === 'txadmin') chips.push('<span class="badge">by txAdmin</span>');
+    if (x.recent) chips.push('<span class="badge warning" title="Detections in the 2 minutes before leaving">flagged: ' + escapeHtml(x.recent) + '</span>');
+    if (x.contained) chips.push('<span class="badge warning">contained</span>');
+    if (x.inVehicle) chips.push('<span class="badge">in vehicle</span>');
+    if (x.health !== undefined && x.health <= 100) chips.push('<span class="badge">dead / down</span>');
+    const open = drops.open === r.id;
+    return '<tr class="dc-row' + (r.category === 'crash' || r.category === 'ban' ? ' hot' : '') + '" data-dc-open="' + r.id + '">' +
+      '<td class="mono muted">' + clock(r.at) + '</td>' +
+      '<td>' + (r.sender ? '<a class="text-link" href="/identities?q=' + encodeURIComponent(r.sender) + '">' +
+        escapeHtml(r.senderName || r.sender) + '</a>' : escapeHtml(r.senderName || '—')) + '</td>' +
+      '<td><span class="badge ' + (DROP_TONE[r.category] || '') + '">' + escapeHtml(r.label) + '</span></td>' +
+      '<td class="muted" title="' + escapeHtml(x.reason || '') + '">' + escapeHtml(short(x.nexusReason || x.reason || '—', 80)) + '</td>' +
+      '<td class="muted">' + fmtDuration(x.sessionSec) + '</td>' +
+      '<td>' + (chips.join(' ') || '<span class="muted">—</span>') + '</td></tr>' +
+      (open ? '<tr class="dc-detail"><td colspan="6"><dl>' +
+        '<dt>Reason given by the game</dt><dd class="mono">' + escapeHtml(x.reason || '—') + '</dd>' +
+        (x.nexusReason ? '<dt>NexusAC ' + escapeHtml(x.action || 'action') + ' reason</dt><dd>' + escapeHtml(x.nexusReason) +
+          (x.banId ? ' <span class="mono">(' + escapeHtml(x.banId) + ')</span>' : '') + '</dd>' : '') +
+        (r.signature ? '<dt>Crash signature</dt><dd class="mono">' + escapeHtml(r.signature) + '</dd>' : '') +
+        '<dt>Time in city</dt><dd>' + fmtDuration(x.sessionSec) + '</dd>' +
+        '<dt>Where</dt><dd class="mono">' + (x.x !== undefined ? x.x + ', ' + x.y + ', ' + x.z : '—') +
+          (x.bucket ? ' · bucket ' + x.bucket : '') + '</dd>' +
+        '<dt>Health / ping / risk</dt><dd>' + (x.health !== undefined ? x.health : '—') + ' / ' +
+          (x.ping !== undefined ? x.ping + ' ms' : '—') + ' / ' + (x.risk !== undefined ? x.risk : '—') + '</dd>' +
+        '</dl></td></tr>' : '');
+  });
+
+  const windows = ['1h', '24h', '7d'].map((w) => '<button class="button small' + (drops.window === w ? ' light' : '') +
+    '" data-dc-window="' + w + '">' + w + '</button>').join('');
+
+  return offlineNote() +
+    '<div class="rs-bar"><label class="search-field"><input id="dc-q" placeholder="Search a player or a reason" value="' +
+      escapeHtml(drops.q) + '"></label><div class="button-row">' + windows + '</div></div>' +
+    tiles +
+    (clusters.length ? panel('Mass disconnects',
+      table(['Started', 'What it looks like', 'Players', 'Breakdown', 'Who'], clusters, '', ''),
+      '<span class="badge">' + clusters.length + '</span>') : '') +
+    (sigs.length ? panel('Crash signatures',
+      '<p class="panel-note" style="margin:0">The same crash hitting several different players points at a bug in a resource or at a crash exploit; one player crashing alone is usually their own PC.</p>' +
+      table(['Signature', 'Crashes', 'Players', 'Who', 'Last'], sigs, '', ''),
+      '<span class="badge">' + sigs.length + '</span>') : '') +
+    (((d && d.repeaters) || []).length ? panel('Keeps crashing',
+      table(['Player', 'Crashes / timeouts', 'Last'], d.repeaters.map((p) =>
+        '<tr><td>' + (p.sender ? '<a class="text-link" href="/identities?q=' + encodeURIComponent(p.sender) + '">' +
+          escapeHtml(p.name || p.sender) + '</a>' : escapeHtml(p.name || '?')) + '</td><td>' + num(p.count) +
+        '</td><td class="muted">' + escapeHtml(ago(p.last, data.serverTime)) + '</td></tr>'), '', '')) : '') +
+    panel('Disconnects',
+      table(['Time', 'Player', 'Why', 'Reason', 'In city', 'Context'], rows,
+        d === null ? 'Loading…' : 'No disconnects in this window',
+        d === null ? 'Reading the event log.' : 'Every player who leaves appears here with the reason the game gave.'),
+      '<span class="badge">' + num(list.length) + (d && d.truncated ? '+' : '') + '</span>');
+}
+
+async function loadDisconnects() {
+  drops.key = drops.window;
+  const result = await api('/servers/' + SERVER + '/disconnects?window=' + encodeURIComponent(drops.window));
+  if (!result.ok) return note(msg, result.error, 'bad');
+  drops.data = result.data;
+  if (tab === 'Disconnects') document.getElementById('view').innerHTML = viewDisconnects();
 }
 
 function viewIdentities() {
@@ -1982,7 +2128,7 @@ function viewCleanup() {
 const VIEWS = {
   Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
-  Activity: viewActivity, Identities: viewIdentities,
+  Activity: viewActivity, Disconnects: viewDisconnects, Identities: viewIdentities,
   Screenshots: viewScreenshots, 'Multi-Stream': viewMultiStream, Protection: viewProtection,
   Webhooks: viewWebhooks, Integrations: viewIntegrations,
   Logs: viewLogs, ResourceLogs: viewResourceLogs, Items: viewItems, Cleanup: viewCleanup, Configuration: viewConfig,
@@ -2216,6 +2362,16 @@ document.addEventListener('click', async (event) => {
     }
     multiStreams.delete(stream.viewerId);
     note(msg, 'Live view stopped.', 'success');
+    return render();
+  }
+  const dcCat = event.target.closest('[data-dc-cat]');
+  if (dcCat) { drops.category = dcCat.dataset.dcCat; return render(); }
+  const dcWin = event.target.closest('[data-dc-window]');
+  if (dcWin) { drops.window = dcWin.dataset.dcWindow; drops.data = null; return render(); }
+  const dcOpen = event.target.closest('[data-dc-open]');
+  if (dcOpen && !event.target.closest('a')) {
+    const id = Number(dcOpen.dataset.dcOpen);
+    drops.open = drops.open === id ? null : id;
     return render();
   }
   if (event.target.closest('[data-event-export]')) return void downloadEventExport();
@@ -2875,6 +3031,14 @@ document.addEventListener('input', (event) => {
   }
   if (event.target.id === 'act-q') return void setActivityQuery(event.target.value);
   if (event.target.id === 'idn-q') return void setIdentityQuery(event.target.value);
+  if (event.target.id === 'dc-q') {
+    drops.q = event.target.value;
+    const cursor = event.target.selectionStart;
+    render();
+    const box = document.getElementById('dc-q');
+    if (box) { box.focus(); box.setSelectionRange(cursor, cursor); }
+    return;
+  }
   if (event.target.id === 'ban-search') {
     banQuery = event.target.value;
     banPage = 1;

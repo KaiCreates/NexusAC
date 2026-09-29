@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from . import (
-    db, events as event_store, identities as identity_store,
+    db, disconnects as disconnect_store, events as event_store, identities as identity_store,
     punishments as punishment_store, supabase_auth,
 )
 from .bridge import handle as bridge_handle, json_body
@@ -585,6 +585,17 @@ async def snapshot(request: Request, server_id: str):
             for c in commands
         ],
     })
+
+
+@router.get("/servers/{server_id}/disconnects")
+async def server_disconnects(request: Request, server_id: str):
+    """Why players left: classified drops, crash signatures, mass disconnects."""
+    user = authenticated(request)
+    rate(f"disconnects:{user['user_id']}", 60, 60)
+    _server_of(user, server_id)
+    db.ensure_schema()
+    return reply(disconnect_store.summary(
+        user["workspace"], server_id, request.query_params.get("window", "24h")))
 
 
 @router.get("/servers/{server_id}/activity")
