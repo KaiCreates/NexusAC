@@ -12,7 +12,7 @@ from fastapi.responses import Response
 
 from . import (
     db, disconnects as disconnect_store, events as event_store, identities as identity_store,
-    punishments as punishment_store, supabase_auth,
+    local_auth, punishments as punishment_store,
 )
 from .bridge import handle as bridge_handle, json_body
 from .protocol import StreamFramesRequest, parse_command
@@ -78,32 +78,18 @@ async def auth(request: Request, action: str):
     rate("auth:" + email, 12)
 
     if action == "register":
-        result = supabase_auth.sign_up(email, password, name or "Owner")
-        if result.get("confirm"):
-            return reply({
-                "ok": True,
-                "confirm": True,
-                "message": "Check your email to confirm the account, then sign in.",
-            })
-        identity = result["identity"]
-    else:
-        identity = supabase_auth.sign_in(email, password)
-
-    user_id = identity["id"]
-    if not db.one("SELECT id FROM nx_users WHERE id=%s", (user_id,)):
-        # First sign-in for this Supabase account: give it a user row, a workspace,
-        # and ownership of that workspace.
+        # One transaction: the user, their workspace and their ownership of it.
         workspace = new_id()
         with db.transaction() as cur:
-            cur.execute(
-                "INSERT INTO nx_users VALUES(%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING",
-                (user_id, email, name or email.split("@")[0], now()),
-            )
+            identity = local_auth.sign_up(cur, email, password, name or email.split("@")[0])
             cur.execute(
                 "INSERT INTO nx_workspaces VALUES(%s,%s,%s)",
                 (workspace, (name or "My") + " workspace", now()),
             )
-            cur.execute("INSERT INTO nx_members VALUES(%s,%s,'owner')", (workspace, user_id))
+            cur.execute("INSERT INTO nx_members VALUES(%s,%s,'owner')", (workspace, identity["id"]))
+    else:
+        identity = local_auth.sign_in(email, password)
+    user_id = identity["id"]
 
     membership = db.one(
         "SELECT workspace FROM nx_members WHERE user_id=%s ORDER BY (role='owner') DESC LIMIT 1",
@@ -121,12 +107,12 @@ async def auth(request: Request, action: str):
 async def reset(request: Request):
     origin_check(request)
     form = await json_body(request, 8_000)
-    email = str(form.get("email", "")).strip().lower()
-    if EMAIL.match(email):
-        rate("reset:" + email, 4)
-        supabase_auth.send_password_reset(email)
-    # Always the same answer, so this cannot be used to discover which emails exist.
-    return reply({"ok": True, "message": "If that account exists, a reset email is on its way."})
+    rate("reset:global", 60, 60)
+    # There is no email service any more (sign-in moved off Supabase), so a
+    # reset is done by the site owner. Same answer for every email, so this
+    # cannot be used to discover which accounts exist.
+    return reply({"ok": True, "message": "Password resets are done by the site owner. "
+                                         "Ask them to set a new password for your account."})
 
 
 # --------------------------------------------------------------------------- #

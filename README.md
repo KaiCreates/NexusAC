@@ -1,6 +1,6 @@
 # NexusAC — website
 
-The web console for the NexusAC FiveM anti-cheat. Python (FastAPI), Supabase for
+The web console for the NexusAC FiveM anti-cheat. Python (FastAPI), Postgres (Neon) for
 accounts and data, deployable to Vercel.
 
 The design is the Next.js build's, ported over: `app/static/style.css` is that
@@ -14,8 +14,9 @@ nexusac-web/
   app/api_routes.py     the JSON API the pages call
   app/bridge.py         the two endpoints the anti-cheat posts to
   app/protocol.py       validation of everything crossing the wire
-  app/supabase_auth.py  Supabase Auth (sign-up, sign-in, JWKS verification)
-  app/db.py             Postgres access via the Supabase pooler
+  app/local_auth.py     built-in sign-up / sign-in (scrypt password hashes)
+  app/maintenance.py    retention: keeps the database a fixed size
+  app/db.py             Postgres access (any host: Neon, Render, self-hosted)
   app/security.py       sessions, API keys, rate limiting, roles
   migrations/001_init.sql
   scripts/migrate.py    create the tables (safe to re-run)
@@ -26,13 +27,13 @@ nexusac-web/
 
 ```bash
 pip install -r requirements.txt
-python scripts/migrate.py      # once, creates the nx_* tables in Supabase
+python scripts/migrate.py      # once, creates the nx_* tables
 python scripts/dev.py          # http://localhost:3000
 ```
 
-`.env` already holds the working values for this Supabase project. It is
-gitignored — `SUPABASE_SECRET_KEY` and `DATABASE_URL` are each full access to the
-database, so neither belongs in a commit or a screenshot.
+`.env` holds the working values (the Neon `DATABASE_URL`). It is
+gitignored — `DATABASE_URL` is full access to the
+database, so it never belongs in a commit or a screenshot.
 
 `GET /health` reports whether the database is reachable.
 
@@ -112,29 +113,32 @@ sync a timeout; it retries with backoff.
 
 1. Push this folder to a repository and import it in Vercel. `vercel.json`
    rewrites every path to the Python function; no build step is needed.
-2. Add these environment variables in Vercel → Settings → Environment Variables
-   (copy the values from `.env`, and set `APP_URL` to the deployed URL):
-   `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
-   `SUPABASE_JWKS_URL`, `DATABASE_URL`, `APP_URL`, `REQUIRE_EMAIL_CONFIRMATION`.
+2. Add `DATABASE_URL` and `APP_URL` in Vercel → Settings → Environment Variables.
 3. Deploy, then point `nexus_web_url` at the Vercel URL and restart the resource.
 
-`DATABASE_URL` uses the Supavisor **transaction pooler** on port 6543, not the
-direct host. Supabase's direct database host resolves to IPv6 only, which Vercel
-functions cannot reach. Prepared statements are disabled in `app/db.py` for the
-same reason — a transaction-mode pooler cannot carry one across statements.
+Use a pooled connection string (Neon's `-pooler` host). Prepared statements are disabled in
+`app/db.py`, so transaction-mode poolers work.
 
-## Accounts and email confirmation
+## Database and accounts
 
-Supabase Auth owns identity: it stores and hashes passwords and handles password
-resets. The website reads the user id out of the freshly issued JWT (verified
-against the project JWKS, ES256) and then mints its own opaque session cookie, so
-rendering a page never depends on refreshing a Supabase token.
+The site runs on any Postgres; only `DATABASE_URL` is required. It moved off
+Supabase on 2026-10-02 after the free project filled up (screenshots, evidence
+and the event log grew without limit). `app/maintenance.py` now sweeps hourly:
+screenshots 14 days (max 300 per server), evidence 30, events 7, commands 7,
+audit 90, and trims harder above `DB_SOFT_LIMIT_MB` (400).
 
-This project has email confirmation **on** with Supabase's built-in mailer, which
-is rate limited to a handful of messages an hour — enough to make sign-up look
-broken. So `REQUIRE_EMAIL_CONFIRMATION=false` creates accounts pre-confirmed
-through the admin API and signs the person straight in. Configure your own SMTP
-provider in Supabase, then set it to `true` to get real verification.
+Sign-in is built in (`app/local_auth.py`): scrypt-hashed passwords in
+`nx_users.password_hash`, then the usual opaque session cookie. There is no
+email service, so password resets are done by whoever runs the site:
+
+    python scripts/set_password.py --list            # who has no password yet
+    python scripts/set_password.py someone@example.com
+
+Moving data from the old Supabase database (safe to re-run, copies only what is
+inside the retention windows, keeps server API keys so the game server needs no
+new key):
+
+    SOURCE_DATABASE_URL=<supabase url> DATABASE_URL=<new url> python scripts/copy_database.py
 
 ## Roles
 

@@ -11,11 +11,12 @@ import base64
 import binascii
 import json
 import logging
+import os
 import re
 
 from fastapi import Request
 
-from . import db
+from . import db, maintenance
 from .protocol import (
     MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MAX_STREAM_FRAME_BYTES,
     MediaRequest, StreamFrameRequest, StreamStartRequest, SyncRequest,
@@ -109,7 +110,7 @@ async def handle(request: Request, action: str):
         return await _stream(request, server, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
     try:
-        return await _sync(request, server, server_id)
+        response = await _sync(request, server, server_id)
     except HttpError:
         raise
     except Exception as error:
@@ -121,6 +122,13 @@ async def handle(request: Request, action: str):
             "error": "Bridge sync could not be stored.",
             "code": type(error).__name__,
         }, 503)
+    # Retention rides on the heartbeat (at most hourly per worker). A failed
+    # sweep must never fail the sync that triggered it.
+    try:
+        maintenance.sweep()
+    except Exception as error:  # noqa: BLE001
+        log.warning("[NexusAC] retention sweep failed: %s", error)
+    return response
 
 
 async def _media(request: Request, server_id: str):
@@ -332,7 +340,9 @@ def _store_identities(cur, server: dict, server_id: str, block: dict) -> int:
     return cursor
 
 
-EVENT_RETENTION_DAYS = 30
+# 7 days, not 30: on a 0.5 GB database a busy server's event log was the
+# biggest table after screenshots. app/maintenance.py trims harder if needed.
+EVENT_RETENTION_DAYS = int(os.environ.get("EVENT_RETENTION_DAYS", "7"))
 # One sweep every N syncs. At a ~3 second poll that is roughly hourly, which is
 # often enough for a 30-day window and rare enough not to sit in the hot path.
 EVENT_SWEEP_EVERY = 1200

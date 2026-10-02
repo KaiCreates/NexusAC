@@ -30,6 +30,6 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['nx_stream_viewers','nx_stream_frames']
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('REVOKE ALL ON TABLE %I FROM anon, authenticated', t);
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN EXECUTE format('REVOKE ALL ON TABLE %I FROM anon, authenticated', t); END IF;
     END LOOP;
 END $$;

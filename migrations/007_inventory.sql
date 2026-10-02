@@ -14,4 +14,7 @@ CREATE TABLE IF NOT EXISTS nx_inventory_views (
 CREATE INDEX IF NOT EXISTS nx_inventory_views_expiry ON nx_inventory_views(created);
 
 ALTER TABLE nx_inventory_views ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE nx_inventory_views FROM anon, authenticated;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN REVOKE ALL ON TABLE nx_inventory_views FROM anon, authenticated; END IF;
+END $$;

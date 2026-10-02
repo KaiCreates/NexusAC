@@ -46,5 +46,5 @@ ALTER TABLE nx_servers ADD COLUMN IF NOT EXISTS punish_cursor bigint NOT NULL DE
 DO $$
 BEGIN
     EXECUTE 'ALTER TABLE nx_punishments ENABLE ROW LEVEL SECURITY';
-    EXECUTE 'REVOKE ALL ON TABLE nx_punishments FROM anon, authenticated';
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN EXECUTE 'REVOKE ALL ON TABLE nx_punishments FROM anon, authenticated'; END IF;
 END $$;

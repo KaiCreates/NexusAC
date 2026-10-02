@@ -18,17 +18,8 @@ services:
       # Copy each value from your local .env. APP_URL is optional on Render:
       # left blank, the app uses RENDER_EXTERNAL_URL (the service's own URL).
       # Set it only for a custom domain.
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_PUBLISHABLE_KEY
-        sync: false
-      - key: SUPABASE_SECRET_KEY
-        sync: false
-      - key: SUPABASE_JWKS_URL
-        sync: false
+      # Any Postgres connection string (Neon: the "pooled" one, with sslmode=require).
       - key: DATABASE_URL
         sync: false
       - key: APP_URL
         sync: false
-      - key: REQUIRE_EMAIL_CONFIRMATION
-        value: "false"

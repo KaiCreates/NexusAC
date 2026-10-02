@@ -35,7 +35,9 @@ def _where() -> str:
     return "your .env file (copy .env.example to .env)"
 
 
-_REQUIRED = ("SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "DATABASE_URL")
+# Any Postgres works (Neon, Render, self-hosted, Supabase). Sign-in is built in
+# (app/local_auth.py), so the database URL is the only thing required.
+_REQUIRED = ("DATABASE_URL",)
 _missing = [name for name in _REQUIRED if not os.environ.get(name, "").strip()]
 if _missing:
     # Report every missing variable at once. Failing on the first one costs a
@@ -55,12 +57,6 @@ def _require(name: str) -> str:
     return os.environ[name].strip()
 
 
-SUPABASE_URL = _require("SUPABASE_URL").rstrip("/")
-SUPABASE_PUBLISHABLE_KEY = _require("SUPABASE_PUBLISHABLE_KEY")
-SUPABASE_SECRET_KEY = _require("SUPABASE_SECRET_KEY")
-SUPABASE_JWKS_URL = os.environ.get(
-    "SUPABASE_JWKS_URL", f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-)
 DATABASE_URL = _require("DATABASE_URL")
 
 # Optional until the WebRTC signaling rollout is enabled. These credentials are
@@ -80,14 +76,8 @@ APP_URL = (
     or "http://localhost:3000"
 ).rstrip("/")
 
-# Supabase projects ship with email confirmation ON and a heavily rate-limited
-# default mail sender (a handful of messages an hour), which makes sign-up look
-# broken. With this false the website creates the account pre-confirmed through
-# the Supabase admin API and signs the person straight in. Set it to true once
-# you have configured your own SMTP provider in Supabase.
-REQUIRE_EMAIL_CONFIRMATION = os.environ.get(
-    "REQUIRE_EMAIL_CONFIRMATION", "false"
-).lower() in ("1", "true", "yes")
+# Kept for the sign-up page template; there is no email confirmation any more.
+REQUIRE_EMAIL_CONFIRMATION = False
 
 SESSION_COOKIE = "nexus_session"
 SESSION_TTL = 7 * 24 * 3600
