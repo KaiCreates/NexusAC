@@ -33,6 +33,7 @@ REQUIRED_TABLES = (
     "nx_punishments",
     "nx_stream_viewers",
     "nx_stream_frames",
+    "nx_inventory_views",
 )
 
 

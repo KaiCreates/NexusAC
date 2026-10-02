@@ -411,12 +411,51 @@ class CleanupCommand(BaseModel):
     expected: Annotated[int, Field(ge=0)]
 
 
+
+class InventoryCommand(BaseModel):
+    """Read-only inventory lookup, answered through /bridge/inventory.
+
+    search  characters matching `query` (online first; offline from the DB)
+    view    one character by ESX identifier: pockets, money, owned vehicles'
+            trunks and gloveboxes, stashes
+    player  the same for an online player, by server id + session
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["inventory"]
+    operation: Literal["search", "view", "player"]
+    query: Annotated[str, Field(max_length=60)] = ""
+    identifier: Annotated[str, Field(max_length=80, pattern=r"^[A-Za-z0-9:_-]*$")] = ""
+    target: Annotated[int, Field(ge=0, le=1024)] = 0
+    session: Annotated[str, Field(max_length=100)] = ""
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InventoryCommand":
+        if self.operation == "view" and not self.identifier:
+            raise ValueError("view needs an identifier")
+        if self.operation == "player" and (self.target < 1 or not self.session):
+            raise ValueError("player needs a target and session")
+        return self
+
+
+MAX_INVENTORY_BYTES = 900_000
+
+
+class InventoryUpload(BaseModel):
+    """The game server's answer to one InventoryCommand, keyed by command id."""
+    model_config = ConfigDict(extra="forbid")
+    commandId: Annotated[str, Field(pattern=r"^[0-9a-fA-F-]{36}$")]
+    operation: Literal["search", "view", "player"]
+    ok: bool = True
+    message: Annotated[str, Field(max_length=500)] = ""
+    body: dict[str, Any] = Field(default_factory=dict)
+
+
 Command = Annotated[
     Union[
         WarnCommand, KickCommand, BanCommand, FreezeCommand, ScreenshotCommand,
         UnbanCommand, SettingCommand, EntityCommand, DetectorCommand, PunishCommand,
         WebhookCommand, ProtectionCommand, EventRuleCommand, StreamCommand, CleanupCommand,
-        VehicleExemptCommand,
+        VehicleExemptCommand, InventoryCommand,
     ],
     Field(discriminator="type"),
 ]

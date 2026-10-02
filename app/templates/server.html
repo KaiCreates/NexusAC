@@ -12,6 +12,7 @@
       <button class="sidebar-link active" data-tab="Overview">{{ ui.icon('grid') }} <span>Overview</span></button>
       <button class="sidebar-link" data-tab="Players">{{ ui.icon('users') }} <span>Players</span>
         <span class="count" id="count-players"></span></button>
+      <button class="sidebar-link" data-tab="Inventories">{{ ui.icon('box') }} <span>Inventories</span></button>
       <span class="nav-group">SECURITY</span>
       <button class="sidebar-link" data-tab="Detections">{{ ui.icon('scan-line') }} <span>Detections</span>
         <span class="count" id="count-detections"></span></button>
@@ -78,7 +79,7 @@
 <script>
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
-const TABS = ['Overview', 'Players', 'Detections', 'Detectors', 'Bans', 'Evidence',
+const TABS = ['Overview', 'Players', 'Inventories', 'Detections', 'Detectors', 'Bans', 'Evidence',
               'Activity', 'Disconnects', 'Identities', 'Screenshots', 'Multi-Stream', 'Protection', 'Webhooks',
               'Integrations', 'Logs', 'ResourceLogs', 'Items', 'Cleanup', 'Configuration'];
 let tab = sessionStorage.getItem('nx_tab_' + SERVER) || 'Overview';
@@ -498,6 +499,7 @@ function playerPanel(p) {
   const can = ['owner', 'administrator', 'moderator'].includes(data.role) && data.online;
   const admin = ['owner', 'administrator'].includes(data.role);
   const tabs = [['overview', 'Overview'], ['detections', 'Detections'], ['evidence', 'Evidence']];
+  if (INV_ROLES.includes(data.role)) tabs.push(['inventory', 'Inventory']);
   if (admin) tabs.push(['network', 'Network']);
   const row = (k, v) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>';
   let body = '';
@@ -520,6 +522,12 @@ function playerPanel(p) {
       row('Session', p.sessionAge != null ? duration(p.sessionAge) : '—') +
       (p.created != null ? row('Entities', num(p.created) + ' created · ' + num(p.denied) + ' denied') : '') +
       '</dl>';
+  } else if (pl.tab === 'inventory') {
+    const mine = inv.view && inv.view.online && Number(inv.view.src) === p.src ? inv.view : null;
+    body = inventoryStatus() + (mine ? inventoryBody(mine)
+      : (inv.busy ? '' : '<div class="ov-empty">' + icon('box', 20) + '<b>Inventory</b><span>Pockets, cars and stashes for this player.</span>' +
+        '<button class="button small light" data-inv-player="' + p.src + '"' + (data.online ? '' : ' disabled') + '>Load inventory</button></div>')) +
+      '<button class="ov-link" data-goto="Inventories">Open Inventories ' + icon('arrow-right', 14) + '</button>';
   } else if (pl.tab === 'network') {
     const net = p.network || {};
     const ids = Array.isArray(net.identifiers) ? net.identifiers : [];
@@ -2125,8 +2133,148 @@ function viewCleanup() {
     'Map assets, player peds and occupied vehicles remain.</p>' + commandLog();
 }
 
+/* ------------------------------------------------------------ inventories
+   Read-only, on demand. A lookup is an `inventory` command; the game server
+   answers through /bridge/inventory and this page polls for the answer. Pockets
+   are live for online players (ox_inventory), saved for offline characters;
+   vehicles' trunks/gloveboxes and stashes come from the database. */
+const INV_ROLES = ['owner', 'administrator', 'moderator'];
+const inv = { query: '', search: null, view: null, busy: '', error: '', token: 0, open: {} };
+
+async function inventoryRequest(body, kind) {
+  const token = ++inv.token;
+  inv.busy = kind; inv.error = '';
+  render();
+  const queued = await api('/servers/' + SERVER + '/commands', { type: 'inventory', ...body });
+  if (token !== inv.token) return;
+  if (!queued.ok) { inv.busy = ''; inv.error = queued.error; return render(); }
+  const id = queued.data.id;
+  const started = Date.now();
+  // Command TTL is 60 s; the game server collects it within ~15 s when idle.
+  while (Date.now() - started < 80000) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (token !== inv.token) return;
+    const result = await api('/servers/' + SERVER + '/inventory/' + id);
+    if (token !== inv.token) return;
+    if (!result.ok) { inv.busy = ''; inv.error = result.error; return render(); }
+    const r = result.data;
+    if (r.status === 'ready') {
+      inv.busy = '';
+      if (r.operation === 'search') inv.search = r.body;
+      else { inv.view = r.body; inv.open = {}; }
+      return render();
+    }
+    // The command acknowledgement can arrive before the upload is visible;
+    // only give up on a "succeeded" with no body after a grace period.
+    if (['failed', 'expired', 'uncertain', 'cancelled'].includes(r.status) ||
+        (r.status === 'succeeded' && Date.now() - started > 20000)) {
+      inv.busy = '';
+      inv.error = r.result || ('The server did not answer (' + r.status + ').');
+      return render();
+    }
+  }
+  inv.busy = ''; inv.error = 'The server did not answer in time. Is it online?';
+  render();
+}
+
+function invMeta(m) {
+  if (!m || typeof m !== 'object') return '';
+  const bits = [];
+  if (m.label) bits.push(escapeHtml(String(m.label)));
+  if (m.serial) bits.push('serial <span class="mono">' + escapeHtml(String(m.serial)) + '</span>');
+  if (m.ammo != null) bits.push('ammo ' + num(m.ammo));
+  if (m.durability != null) bits.push('durability ' + num(Math.round(Number(m.durability) || 0)) + '%');
+  if (m.registered) bits.push('registered to ' + escapeHtml(String(m.registered)));
+  if (m.note) bits.push(escapeHtml(String(m.note)));
+  const known = ['label', 'serial', 'ammo', 'durability', 'registered', 'note', 'components', 'image', 'weight'];
+  const other = Object.keys(m).filter((k) => !known.includes(k));
+  if (other.length) bits.push('<span class="muted" title="' + escapeHtml(other.join(', ')) + '">+' + other.length + ' more</span>');
+  return bits.join(' · ');
+}
+
+function invItems(items, emptyText) {
+  const rows = (items || []).map((it) =>
+    '<tr><td class="muted">' + (it.slot != null ? num(it.slot) : '—') + '</td>' +
+    '<td><b>' + escapeHtml(it.label || it.name) + '</b>' +
+      (it.label && it.label !== it.name ? '<div class="muted mono">' + escapeHtml(it.name) + '</div>' : '') + '</td>' +
+    '<td style="text-align:right"><b>' + num(it.count) + '</b></td>' +
+    '<td class="muted">' + (invMeta(it.metadata) || '—') + '</td></tr>');
+  return table(['Slot', 'Item', 'Count', 'Details'], rows, 'Empty', emptyText || 'Nothing here.');
+}
+
+function invTotal(items) { return (items || []).reduce((n, it) => n + (Number(it.count) || 0), 0); }
+
+function inventoryBody(v) {
+  if (!v) return '';
+  const accounts = v.accounts && typeof v.accounts === 'object'
+    ? Object.entries(v.accounts).map(([k, n]) => '<span class="ov-chip dim">' + escapeHtml(k.replace(/_/g, ' ')) +
+        ' <b>$' + num(n) + '</b></span>').join(' ') : '';
+  const card = (key, title, sub, inner) => {
+    const openNow = inv.open[key] !== false;
+    return '<section class="panel inv-card"><button class="panel-heading inv-toggle" data-inv-toggle="' + escapeHtml(key) + '">' +
+      '<h3>' + title + '</h3><span class="muted">' + sub + ' ' + icon(openNow ? 'chevron-down' : 'chevron-right', 14) +
+      '</span></button>' + (openNow ? inner : '') + '</section>';
+  };
+  const vehicles = (v.vehicles || []).map((car, i) => card('veh' + i,
+    icon('box', 15) + ' Vehicle <span class="mono">' + escapeHtml(car.plate || '?') + '</span>',
+    num((car.glovebox || []).length + (car.trunk || []).length) + ' stacks',
+    '<h4 class="inv-sub">Glovebox</h4>' + invItems(car.glovebox, 'Glovebox is empty.') +
+    '<h4 class="inv-sub">Trunk</h4>' + invItems(car.trunk, 'Trunk is empty.'))).join('');
+  const stashes = (v.stashes || []).map((s, i) => card('stash' + i,
+    icon('lock', 15) + ' Stash <span class="mono">' + escapeHtml(s.name || '?') + '</span>',
+    num((s.items || []).length) + ' stacks', invItems(s.items, 'Stash is empty.'))).join('');
+  return '<div class="inv-head"><div><h2>' + escapeHtml(v.name || v.identifier) + '</h2>' +
+      '<p class="muted mono">' + escapeHtml(v.identifier || '') + '</p>' +
+      '<p>' + (v.online ? '<span class="ov-chip ok"><span class="status-dot"></span> Online' +
+        (v.src ? ' · ID ' + num(v.src) : '') + (v.player ? ' · ' + escapeHtml(v.player) : '') + '</span>'
+        : '<span class="ov-chip dim">Offline</span>') +
+      ' <span class="ov-chip ' + (v.live ? 'ok' : 'dim') + '">' + (v.live ? 'Live pockets' : 'Last saved pockets') + '</span>' +
+      (v.job ? ' <span class="ov-chip dim">' + escapeHtml(v.job) + (v.grade != null ? ' ' + num(v.grade) : '') + '</span>' : '') +
+      (v.group ? ' <span class="ov-chip dim">' + escapeHtml(v.group) + '</span>' : '') + '</p>' +
+      (accounts ? '<p>' + accounts + '</p>' : '') + '</div>' +
+      '<button class="button small" data-inv-refresh="' + escapeHtml(v.identifier || '') + '"' + (inv.busy ? ' disabled' : '') + '>' +
+      icon('rotate', 14) + ' Refresh</button></div>' +
+    (v.truncated ? '<div class="notice">This inventory was too large to send in full; item details or some stashes were left out.</div>' : '') +
+    card('pockets', icon('users', 15) + ' Pockets', num((v.items || []).length) + ' stacks · ' + num(invTotal(v.items)) + ' items',
+      invItems(v.items, 'Pockets are empty.')) +
+    (vehicles || panel('Vehicles', '<div class="empty-state"><h3>No owned vehicles</h3><p>Nothing in owned_vehicles for this character.</p></div>')) +
+    stashes;
+}
+
+function inventoryStatus() {
+  if (inv.busy) return '<div class="notice">' + icon('clock', 14) + ' Asking the server' +
+    (inv.busy === 'search' ? ' for matching characters' : ' for that inventory') +
+    '… the first lookup after a quiet spell can take up to ~15 s.</div>';
+  if (inv.error) return '<div class="notice bad">' + escapeHtml(inv.error) + '</div>';
+  return '';
+}
+
+function viewInventories() {
+  if (!INV_ROLES.includes(data.role)) {
+    return panel('Inventories', '<div class="empty-state"><h3>Not available for your role</h3><p>Moderators and above can view inventories.</p></div>');
+  }
+  const rows = ((inv.search || {}).rows || []).map((r) =>
+    '<tr class="inv-row" data-inv-open="' + escapeHtml(r.identifier) + '"><td><b>' + escapeHtml(r.name || '—') + '</b>' +
+      (r.player ? '<div class="muted">' + escapeHtml(r.player) + '</div>' : '') + '</td>' +
+    '<td class="mono muted">' + escapeHtml(r.identifier) + '</td>' +
+    '<td>' + escapeHtml(r.job || '—') + (r.grade != null ? ' <span class="muted">' + num(r.grade) + '</span>' : '') + '</td>' +
+    '<td>' + (r.online ? '<span class="ov-chip ok">Online · ID ' + num(r.src) + '</span>' : '<span class="ov-chip dim">Offline</span>') + '</td>' +
+    '<td style="text-align:right">' + icon('chevron-right', 14) + '</td></tr>');
+  const search = '<div class="inv-search"><input class="cfg-input" id="inv-q" placeholder="Character name, FiveM name or identifier (empty = everyone)" ' +
+    'maxlength="60" value="' + escapeHtml(inv.query) + '" spellcheck="false">' +
+    '<button class="button small light" data-inv-search' + (inv.busy || !data.online ? ' disabled' : '') + '>' + icon('search', 14) + ' Search</button></div>';
+  const left = panel('Characters', search + inventoryStatus() + (inv.search
+    ? table(['Character', 'Identifier', 'Job', 'Status', ''], rows, 'No matches', 'Nobody matches "' + (inv.search.query || '') + '".')
+    : '<div class="empty-state"><h3>Search for a character</h3><p>Online players are listed first and show their live pockets. Offline characters show their last saved inventory.</p></div>'),
+    inv.search ? '<span class="badge">' + num(rows.length) + '</span>' : '');
+  return offlineNote() + '<div class="inv-layout"><div>' + left + '</div><div>' +
+    (inv.view ? inventoryBody(inv.view) : panel('Inventory', '<div class="empty-state"><h3>Pick a character</h3>' +
+      '<p>Pockets, money, every owned vehicle\'s glovebox and trunk, and their stashes.</p></div>')) +
+    '</div></div>';
+}
+
 const VIEWS = {
-  Overview: viewOverview, Players: viewPlayers, Detections: viewDetections,
+  Overview: viewOverview, Players: viewPlayers, Inventories: viewInventories, Detections: viewDetections,
   Detectors: viewDetectors, Bans: viewBans, Evidence: viewEvidence,
   Activity: viewActivity, Disconnects: viewDisconnects, Identities: viewIdentities,
   Screenshots: viewScreenshots, 'Multi-Stream': viewMultiStream, Protection: viewProtection,
@@ -2232,17 +2380,28 @@ function render() {
   }
 }
 
+/* Versions of the snapshot and evidence this page already holds. The server
+   sends a part only when its version differs, so an idle dashboard costs a
+   few hundred bytes a poll instead of a megabyte (Render's free plan has
+   5 GB of outbound bandwidth a month). */
+let heldVersions = { sv: '', ev: '' };
 async function load(force) {
   if (loadInFlight || (!force && pollPaused())) return;
   loadInFlight = true;
   let result;
-  try { result = await api('/servers/' + SERVER + '/snapshot'); }
+  const query = force || !serverData ? '' :
+    '?sv=' + encodeURIComponent(heldVersions.sv) + '&ev=' + encodeURIComponent(heldVersions.ev);
+  try { result = await api('/servers/' + SERVER + '/snapshot' + query); }
   finally { loadInFlight = false; }
   if (!result.ok) {
     if (result.status === 401) return (location.href = '/login?next=/dashboard');
     return note(msg, result.error, 'bad');
   }
-  showServerData(result.data);
+  const fresh = result.data;
+  if (fresh.snapshotUnchanged && serverData) fresh.snapshot = serverData.snapshot;
+  if (fresh.evidenceUnchanged && serverData) fresh.evidence = serverData.evidence;
+  heldVersions = { sv: fresh.snapshotVersion || '', ev: fresh.evidenceVersion || '' };
+  showServerData(fresh);
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
   const evidencePage = tab === 'Evidence' || tab === 'Screenshots';
@@ -2326,6 +2485,28 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
 }
 
 document.addEventListener('click', async (event) => {
+  const invSearch = event.target.closest('[data-inv-search]');
+  if (invSearch) {
+    inv.query = (document.getElementById('inv-q') || {}).value || '';
+    return inventoryRequest({ operation: 'search', query: inv.query.trim() }, 'search');
+  }
+  const invOpen = event.target.closest('[data-inv-open]') || event.target.closest('[data-inv-refresh]');
+  if (invOpen) {
+    const identifier = invOpen.dataset.invOpen || invOpen.dataset.invRefresh;
+    if (identifier) return inventoryRequest({ operation: 'view', identifier }, 'view');
+  }
+  const invPlayer = event.target.closest('[data-inv-player]');
+  if (invPlayer) {
+    const player = playerOf(invPlayer.dataset.invPlayer);
+    if (!player || !player.sessionKey) return note(msg, 'That player session changed. Refresh the player list.', 'bad');
+    return inventoryRequest({ operation: 'player', target: player.src, session: player.sessionKey }, 'view');
+  }
+  const invToggle = event.target.closest('[data-inv-toggle]');
+  if (invToggle) {
+    const key = invToggle.dataset.invToggle;
+    inv.open[key] = inv.open[key] === false;
+    return render();
+  }
   const streamWatch = event.target.closest('[data-stream-watch]');
   if (streamWatch) {
     const player = playerOf(streamWatch.dataset.streamWatch);
@@ -2923,7 +3104,9 @@ async function pollMultiStreams() {
   }
   if (changed) render();
 }
-setInterval(pollMultiStreams, 250);
+// Matches the capture rate (Config.Nex.intervalMs, 500 ms): polling faster
+// than frames are produced only costs requests.
+setInterval(pollMultiStreams, 500);
 
 document.addEventListener('input', (event) => {
   if (event.target.name === 'minConfidence' && event.target.closest('#protection-form')) {
@@ -3058,6 +3241,14 @@ document.addEventListener('input', (event) => {
   if (replacement && current) current.replaceWith(replacement);
 });
 
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target.id === 'inv-q') {
+    event.preventDefault();
+    inv.query = event.target.value;
+    inventoryRequest({ operation: 'search', query: inv.query.trim() }, 'search');
+  }
+});
+
 load(true);
 // A changed detector select remains focused after its change event. Treating
 // that focus as an active edit used to suppress every live refresh, so the
@@ -3065,6 +3256,13 @@ load(true);
 // the 90-second timeout (or until the operator clicked elsewhere). Pending
 // writes must keep polling; other focused inputs still pause repainting so
 // typing and unsaved drafts are not disturbed.
-setInterval(() => { if (live && (!pollPaused() || pendingChanges.size > 0)) load(false); }, 1000);
+// Every 2 s while the tab is visible (unchanged polls are tiny now); never
+// while it is hidden -- a dashboard left open in a background tab used to
+// download the full snapshot every second, all day.
+setInterval(() => {
+  if (document.hidden) return;
+  if (live && (!pollPaused() || pendingChanges.size > 0)) load(false);
+}, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && live) load(false); });
 </script>
 {% endblock %}

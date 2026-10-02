@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +27,10 @@ log = logging.getLogger("nexusac")
 ROOT = Path(__file__).resolve().parent
 
 app = FastAPI(title="NexusAC", docs_url=None, redoc_url=None, openapi_url=None)
+# Render's free plan includes 5 GB of outbound bandwidth a month. The
+# dashboard's JSON compresses 5-10x; images are already compressed and are
+# served small enough that gzip costs them little.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 app.include_router(api_router, prefix="/api/control")
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 templates = Jinja2Templates(directory=str(ROOT / "templates"))

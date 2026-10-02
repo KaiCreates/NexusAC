@@ -524,15 +524,42 @@ async def delete_server(request: Request, server_id: str):
 
 @router.get("/servers/{server_id}/snapshot")
 async def snapshot(request: Request, server_id: str):
+    # The dashboard polls this every couple of seconds. It used to send the
+    # whole server snapshot and the last 200 evidence records every time --
+    # around a megabyte a poll, for data the game server only changes every
+    # 30 s -- which emptied Render's 5 GB monthly bandwidth in an afternoon.
+    # Now the page sends the versions it already holds (sv, ev) and gets back
+    # only the parts that changed. Both versions are computed in the
+    # database, so an unchanged poll moves a few hundred bytes end to end.
     user = authenticated(request)
-    server = _server_of(user, server_id)
+    try:
+        server = db.one(
+            "SELECT id, name, token_hint, last_seen, sequence FROM nx_servers "
+            "WHERE id=%s AND workspace=%s", (server_id, user["workspace"]))
+    except Exception:
+        server = None
+    require(server, 404, "Server not found.")
+    snapshot_version = "%s:%s:%s" % (server["last_seen"], server["sequence"], user["role"])
+    ev_meta = db.one(
+        "SELECT md5(coalesce(string_agg(e.id::text || md5(e.body::text), ',' ORDER BY e.id::text), '')) AS v, "
+        "(SELECT count(*) FROM nx_media m WHERE m.server=%s) AS media "
+        "FROM (SELECT id, body FROM nx_evidence WHERE server=%s "
+        "ORDER BY (body->>'at')::double precision DESC, id DESC LIMIT 200) e",
+        (server_id, server_id),
+    )
+    evidence_version = "%s:%s" % (ev_meta["v"], ev_meta["media"])
+    send_snapshot = request.query_params.get("sv") != snapshot_version
+    send_evidence = request.query_params.get("ev") != evidence_version
+    if send_snapshot:
+        row = db.one("SELECT snapshot FROM nx_servers WHERE id=%s", (server_id,))
+        server["snapshot"] = row["snapshot"] if row else None
     evidence = db.query(
         "SELECT e.id, e.body, (SELECT count(*) FROM nx_media m "
         "WHERE m.server=e.server AND m.evidence_id=e.id) AS images "
         "FROM nx_evidence e WHERE e.server=%s "
         "ORDER BY (e.body->>'at')::double precision DESC, e.id DESC LIMIT 200",
         (server_id,),
-    )
+    ) if send_evidence else []
     # Recent commands travel with the snapshot. Without them this page could
     # only ever say "queued" -- a refused or failed command was invisible here,
     # because commands were only exposed on the workspace endpoint.
@@ -542,8 +569,8 @@ async def snapshot(request: Request, server_id: str):
         (server_id,),
     )
 
-    public_snapshot = server["snapshot"] or {}
-    if user["role"] not in ("owner", "administrator"):
+    public_snapshot = (server.get("snapshot") or {}) if send_snapshot else {}
+    if send_snapshot and user["role"] not in ("owner", "administrator"):
         # The server snapshot is shared across workspace roles. Never rely on
         # the browser to hide identifiers/IPs: strip them at the API boundary.
         public_snapshot = dict(public_snapshot)
@@ -560,8 +587,12 @@ async def snapshot(request: Request, server_id: str):
         "online": _online(server["last_seen"]),
         "status": _health(server["last_seen"]),
         "serverTime": now(),
-        "snapshot": public_snapshot,
-        "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence],
+        "snapshotVersion": snapshot_version,
+        "evidenceVersion": evidence_version,
+        "snapshotUnchanged": not send_snapshot,
+        "evidenceUnchanged": not send_evidence,
+        "snapshot": public_snapshot if send_snapshot else None,
+        "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence] if send_evidence else None,
         "commands": [
             {
                 "id": str(c["id"]),
@@ -676,6 +707,12 @@ async def command(request: Request, server_id: str):
         require(payload.scope == "client" or
                 (snap.get("cleanup") or {}).get(payload.category) == payload.expected, 409,
                 "Cleanup preview changed. Refresh before clearing entities.")
+    elif kind == "inventory":
+        db.ensure_schema()
+        if payload.operation == "player":
+            require(any(p.get("src") == payload.target and p.get("sessionKey") == payload.session
+                        for p in snap.get("players", [])),
+                    409, "That player's session changed. Refresh the player list.")
     elif kind == "stream":
         db.ensure_schema()
         if payload.operation == "start":
@@ -739,6 +776,36 @@ async def command(request: Request, server_id: str):
         )
     audit(user, "command." + kind, str(server["name"]) + " / " + command_id)
     return reply({"id": command_id, "status": "pending"}, 202)
+
+
+UUID = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+@router.get("/servers/{server_id}/inventory/{command_id}")
+async def inventory_result(request: Request, server_id: str, command_id: str):
+    """Poll for the answer to an inventory lookup this staff member queued.
+
+    `pending`/`sent` while the game server has not answered yet; `ready` with
+    the body once it has; the command's own status (failed, expired) otherwise.
+    """
+    user = authenticated(request)
+    require("inventory" in PERMISSIONS.get(user["role"], ()), 403,
+            "Your role cannot view inventories.")
+    require(UUID.match(command_id), 404, "Unknown inventory request.")
+    _server_of(user, server_id)
+    db.ensure_schema()
+    rate("inventory-view:" + str(user["user_id"]), 240, 60)
+    command = db.one("SELECT actor, status, result FROM nx_commands WHERE id=%s AND server=%s",
+                     (command_id, server_id))
+    require(command and str(command["actor"]) == str(user["user_id"]), 404,
+            "Unknown inventory request.")
+    view = db.one("SELECT operation, ok, message, body, created FROM nx_inventory_views "
+                  "WHERE server=%s AND command_id=%s", (server_id, command_id))
+    if view:
+        return reply({"status": "ready", "operation": view["operation"], "ok": view["ok"],
+                      "message": view["message"], "body": view["body"], "at": view["created"],
+                      "serverTime": now()})
+    return reply({"status": command["status"], "result": command["result"], "serverTime": now()})
 
 
 @router.post("/servers/{server_id}/streams/frames")

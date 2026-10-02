@@ -46,7 +46,7 @@ async def json_body(request: Request, maximum: int) -> dict:
 
 BRIDGE_LIMITS = {
     "ping": 30, "heartbeat": 30, "wait": 180, "sync": 60,
-    "media": 180, "stream-start": 60, "stream": 600,
+    "media": 180, "stream-start": 60, "stream": 600, "inventory": 60,
 }
 
 
@@ -101,6 +101,8 @@ async def handle(request: Request, action: str):
         })
     if action == "media":
         return await _media(request, server_id)
+    if action == "inventory":
+        return await _inventory(request, server_id)
     if action == "stream-start":
         return await _stream_start(request, server, server_id)
     if action == "stream":
@@ -148,6 +150,38 @@ def _player_session_matches(server: dict, target: int, player_session: str) -> b
     return any(int(player.get("src") or 0) == target
                and player.get("sessionKey") == player_session
                for player in snapshot.get("players", []))
+
+
+async def _inventory(request: Request, server_id: str):
+    """Store the game server's answer to one staff inventory lookup.
+
+    Only accepted for an `inventory` command this website queued for this
+    server, so the endpoint cannot be used as general storage. Results are a
+    short-lived cache: anything older than ten minutes is pruned here.
+    """
+    from .protocol import MAX_INVENTORY_BYTES, InventoryUpload
+
+    payload = InventoryUpload(**await json_body(request, MAX_INVENTORY_BYTES + 8192))
+    db.ensure_schema()
+    timestamp = now()
+    with db.transaction() as cur:
+        cur.execute("SELECT body FROM nx_commands WHERE id=%s AND server=%s",
+                    (payload.commandId, server_id))
+        row = cur.fetchone()
+        require(row and (row["body"] or {}).get("type") == "inventory", 404,
+                "No inventory request with that id.")
+        cur.execute("DELETE FROM nx_inventory_views WHERE server=%s AND created<%s",
+                    (server_id, timestamp - 600))
+        cur.execute(
+            """INSERT INTO nx_inventory_views(server,command_id,operation,ok,message,body,created)
+               VALUES(%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT(server,command_id) DO UPDATE SET
+                 operation=EXCLUDED.operation, ok=EXCLUDED.ok, message=EXCLUDED.message,
+                 body=EXCLUDED.body, created=EXCLUDED.created""",
+            (server_id, payload.commandId, payload.operation, payload.ok, payload.message,
+             db.jsonb(payload.body), timestamp),
+        )
+    return reply({"ok": True})
 
 
 async def _stream_start(request: Request, server: dict, server_id: str):

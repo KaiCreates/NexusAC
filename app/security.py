@@ -24,11 +24,11 @@ PERMISSIONS: dict[str, tuple[str, ...]] = {
     # the moderation ones, because it is a policy change, not an action.
     # "eventRule" was missing here, so the Event Protection page's own "Add
     # event rule" form was refused for every role. Same tier as protection.
-    "owner": ("warn", "kick", "ban", "freeze", "screenshot", "stream", "unban", "setting", "entity", "detector", "punish", "webhook", "protection", "eventRule", "vehicleExempt", "cleanup"),
-    "administrator": ("warn", "kick", "ban", "freeze", "screenshot", "stream", "unban", "setting", "entity", "detector", "punish", "webhook", "protection", "eventRule", "vehicleExempt", "cleanup"),
+    "owner": ("warn", "kick", "ban", "freeze", "screenshot", "stream", "unban", "setting", "entity", "detector", "punish", "webhook", "protection", "eventRule", "vehicleExempt", "cleanup", "inventory"),
+    "administrator": ("warn", "kick", "ban", "freeze", "screenshot", "stream", "unban", "setting", "entity", "detector", "punish", "webhook", "protection", "eventRule", "vehicleExempt", "cleanup", "inventory"),
     # A moderator gets the mild option too -- warning is the one that should be
     # reached for first, so withholding it would just push them to kick.
-    "moderator": ("warn", "kick", "freeze", "screenshot"),
+    "moderator": ("warn", "kick", "freeze", "screenshot", "inventory"),
     "viewer": (),
 }
 
