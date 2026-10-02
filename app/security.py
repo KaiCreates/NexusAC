@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 import time
 import uuid
 from typing import Any
@@ -97,17 +98,46 @@ def create_session(user_id: str, workspace: str) -> str:
     return token
 
 
+# Signed-in sessions, cached so a dashboard left open (polling every couple of
+# seconds) does not keep the database awake. Any non-GET request from a signed-in
+# page and every logout clears the cache, so role changes, removals and sign-outs
+# take effect immediately; a password reset done with scripts/set_password.py
+# (another process) takes effect within SESSION_CACHE_SECONDS.
+SESSION_CACHE_SECONDS = 300
+_sessions: dict[str, tuple[float, dict | None]] = {}
+_sessions_lock = threading.Lock()
+
+
+def forget_sessions() -> None:
+    with _sessions_lock:
+        _sessions.clear()
+
+
 def session_for(request: Request) -> dict | None:
     token = token_from(request)
     if not token:
         return None
+    key = sha256(token)
+    with _sessions_lock:
+        hit = _sessions.get(key)
+        if hit and hit[0] > time.time() and (hit[1] is None or int(hit[1]["expires"]) > now()):
+            return dict(hit[1]) if hit[1] else None
+    row = _session_row(key)
+    with _sessions_lock:
+        if len(_sessions) > 5000:
+            _sessions.clear()
+        _sessions[key] = (time.time() + SESSION_CACHE_SECONDS, row)
+    return dict(row) if row else None
+
+
+def _session_row(key: str) -> dict | None:
     return db.one(
-        """SELECT u.id AS user_id, u.name, u.email, s.workspace, m.role
+        """SELECT u.id AS user_id, u.name, u.email, s.workspace, m.role, s.expires
              FROM nx_sessions s
              JOIN nx_users u ON u.id = s.user_id
              JOIN nx_members m ON m.user_id = u.id AND m.workspace = s.workspace
             WHERE s.hash = %s AND s.expires > %s""",
-        (sha256(token), now()),
+        (key, now()),
     )
 
 
@@ -130,16 +160,25 @@ def origin_check(request: Request) -> None:
     require(origin in allowed, 403, "This request must come from your NexusAC website.")
 
 
+# In memory (one website process): the database-backed limiter was an INSERT on
+# every request -- including every game-server poll -- which by itself kept the
+# database from ever sleeping.
+_limits: dict[str, tuple[int, float]] = {}
+_limits_lock = threading.Lock()
+
+
 def rate(key: str, maximum: int, seconds: int = 900) -> None:
-    row = db.one(
-        """INSERT INTO nx_limits(key,count,expires) VALUES(%s,1,%s)
-           ON CONFLICT(key) DO UPDATE SET
-             count = CASE WHEN nx_limits.expires <= %s THEN 1 ELSE nx_limits.count + 1 END,
-             expires = CASE WHEN nx_limits.expires <= %s THEN EXCLUDED.expires ELSE nx_limits.expires END
-           RETURNING count""",
-        (sha256(key), now() + seconds, now(), now()),
-    )
-    require(row and row["count"] <= maximum, 429, "Too many requests. Please wait and try again.")
+    moment = time.time()
+    with _limits_lock:
+        if len(_limits) > 20000:
+            for k in [k for k, (_, exp) in _limits.items() if exp <= moment]:
+                del _limits[k]
+        count, expires = _limits.get(key, (0, 0.0))
+        if expires <= moment:
+            count, expires = 0, moment + seconds
+        count += 1
+        _limits[key] = (count, expires)
+    require(count <= maximum, 429, "Too many requests. Please wait and try again.")
 
 
 def audit(user: dict, action: str, detail: str) -> None:

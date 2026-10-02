@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from . import (
-    db, disconnects as disconnect_store, events as event_store, identities as identity_store,
+    db, disconnects as disconnect_store, events as event_store, hub, identities as identity_store,
     local_auth, punishments as punishment_store,
 )
 from .bridge import handle as bridge_handle, json_body
@@ -150,10 +150,10 @@ async def workspace(request: Request):
             "email": user["email"], "role": user["role"], "workspace": str(space),
         },
         "servers": [
-            {"id": str(s["id"]), "name": s["name"], "lastSeen": s["last_seen"],
-             "created": s["created"], "hint": s["token_hint"], "online": _online(s["last_seen"]),
-             "status": _health(s["last_seen"])}
-            for s in servers
+            {"id": str(s["id"]), "name": s["name"], "lastSeen": seen,
+             "created": s["created"], "hint": s["token_hint"], "online": _online(seen),
+             "status": _health(seen)}
+            for s in servers for seen in (hub.last_seen(str(s["id"]), s["last_seen"]),)
         ],
         "members": [{"id": str(m["id"]), "name": m["name"], "email": m["email"],
                      "role": m["role"]} for m in members],
@@ -322,6 +322,7 @@ def _int_param(request: Request, name: str, default: int) -> int:
 @router.get("/identities")
 async def identity_search(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
     rate(f"identities:{user['user_id']}", 120, 60)
@@ -344,16 +345,17 @@ async def identities_online(request: Request):
             "Only owners and administrators can view network identity data.")
     rate(f"identities-online:{user['user_id']}", 120, 60)
     servers = db.query(
-        "SELECT id,name,last_seen,snapshot FROM nx_servers WHERE workspace=%s ORDER BY name",
+        "SELECT id,name,last_seen FROM nx_servers WHERE workspace=%s ORDER BY name",
         (user["workspace"],),
     )
     rows = []
     online_servers = 0
     for server in servers:
-        if not _online(server["last_seen"]):
+        if not _online(hub.last_seen(str(server["id"]), server["last_seen"])):
             continue
         online_servers += 1
-        snapshot = server.get("snapshot") or {}
+        state = hub.by_id(str(server["id"]))
+        snapshot = hub.snapshot_of(state) if state else {}
         for player in snapshot.get("players", []):
             rows.append({
                 "server": server["name"],
@@ -370,6 +372,7 @@ async def identities_online(request: Request):
 @router.get("/identities/summary")
 async def identities_summary(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
     db.ensure_schema()
@@ -379,6 +382,7 @@ async def identities_summary(request: Request):
 @router.get("/identities/detail")
 async def identity_detail(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
     db.ensure_schema()
@@ -390,6 +394,7 @@ async def identity_detail(request: Request):
 @router.get("/identities/aliases")
 async def identity_aliases(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     require(user["role"] in ("owner", "administrator"), 403,
             "Only owners and administrators can view network identity data.")
     db.ensure_schema()
@@ -412,6 +417,7 @@ async def identity_aliases(request: Request):
 @router.get("/events")
 async def events_search(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     rate(f"events:{user['user_id']}", 180, 60)
     db.ensure_schema()
     q = request.query_params
@@ -431,6 +437,7 @@ async def events_search(request: Request):
 @router.get("/events/types")
 async def events_types(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     db.ensure_schema()
     return reply({"types": event_store.types(user["workspace"])})
 
@@ -442,6 +449,7 @@ async def events_types(request: Request):
 @router.get("/punishments")
 async def punishments_search(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     rate(f"punishments:{user['user_id']}", 180, 60)
     q = request.query_params
     result = punishment_store.search(
@@ -460,19 +468,24 @@ async def punishments_search(request: Request):
 @router.get("/punishments/identity")
 async def punishments_for_identity(request: Request):
     user = authenticated(request)
+    _fresh(user["workspace"])
     identifier = request.query_params.get("uid", "")
     require(identifier, 400, "An identity id is required.")
     return reply({"rows": punishment_store.for_identity(user["workspace"], identifier)})
 
 
 def _server_of(user: dict, server_id: str) -> dict:
-    try:
-        server = db.one("SELECT * FROM nx_servers WHERE id=%s AND workspace=%s",
-                        (server_id, user["workspace"]))
-    except Exception:
-        server = None  # a malformed uuid in the path is a 404, not a 500
-    require(server, 404, "Server not found.")
-    return server
+    """The server's row from app/hub.py's cache, with live last_seen. Never the
+    snapshot (use hub.snapshot_of) -- reading that column on every request was
+    most of the database transfer."""
+    state = hub.by_id(server_id, user["workspace"])
+    require(state, 404, "Server not found.")
+    return state.row
+
+
+def _fresh(workspace: str) -> None:
+    """Pages that read mirrored tables write the in-memory buffer out first."""
+    hub.flush_workspace(workspace)
 
 
 @router.post("/servers/{server_id}/rotate")
@@ -480,7 +493,8 @@ async def rotate(request: Request, server_id: str):
     origin_check(request)
     user = authenticated(request)
     require(user["role"] == "owner", 403, "Only the owner can rotate an API key.")
-    server = _server_of(user, server_id)
+    server = dict(_server_of(user, server_id))
+    hub.forget(server_id)          # write its buffer, then drop the old key from memory
     token = new_secret()
     with db.transaction() as cur:
         cur.execute(
@@ -502,7 +516,8 @@ async def delete_server(request: Request, server_id: str):
     origin_check(request)
     user = authenticated(request)
     require(user["role"] == "owner", 403, "Only the owner can remove a server.")
-    server = _server_of(user, server_id)
+    server = dict(_server_of(user, server_id))
+    hub.forget(server_id, flush_first=False)
     db.execute("DELETE FROM nx_servers WHERE id=%s", (server_id,))
     audit(user, "server.delete", str(server["name"]))
     return reply({"ok": True})
@@ -510,35 +525,27 @@ async def delete_server(request: Request, server_id: str):
 
 @router.get("/servers/{server_id}/snapshot")
 async def snapshot(request: Request, server_id: str):
-    # The dashboard polls this every couple of seconds. It used to send the
-    # whole server snapshot and the last 200 evidence records every time --
-    # around a megabyte a poll, for data the game server only changes every
-    # 30 s -- which emptied Render's 5 GB monthly bandwidth in an afternoon.
-    # Now the page sends the versions it already holds (sv, ev) and gets back
-    # only the parts that changed. Both versions are computed in the
-    # database, so an unchanged poll moves a few hundred bytes end to end.
+    # The dashboard polls this every second or two. The page sends the versions
+    # it already holds (sv snapshot, ev evidence, cv commands) and only changed
+    # parts come back. Versions live in memory (app/hub.py), so an unchanged
+    # poll does not touch the database at all -- a dashboard left open all day
+    # must not keep a scale-to-zero database awake.
     user = authenticated(request)
-    try:
-        server = db.one(
-            "SELECT id, name, token_hint, last_seen, sequence FROM nx_servers "
-            "WHERE id=%s AND workspace=%s", (server_id, user["workspace"]))
-    except Exception:
-        server = None
-    require(server, 404, "Server not found.")
-    snapshot_version = "%s:%s:%s" % (server["last_seen"], server["sequence"], user["role"])
-    ev_meta = db.one(
-        "SELECT md5(coalesce(string_agg(e.id::text || md5(e.body::text), ',' ORDER BY e.id::text), '')) AS v, "
-        "(SELECT count(*) FROM nx_media m WHERE m.server=%s) AS media "
-        "FROM (SELECT id, body FROM nx_evidence WHERE server=%s "
-        "ORDER BY (body->>'at')::double precision DESC, id DESC LIMIT 200) e",
-        (server_id, server_id),
-    )
-    evidence_version = "%s:%s" % (ev_meta["v"], ev_meta["media"])
+    state = hub.by_id(server_id, user["workspace"])
+    require(state, 404, "Server not found.")
+    server = state.row
+    snapshot_version = "%s:%s:%s" % (hub.INSTANCE, state.version, user["role"])
+    evidence_version = "%s:%s" % (hub.INSTANCE, state.evidence_version)
+    # Open commands can expire by time alone, so their version ticks while open.
+    commands_version = "%s:%s:%s" % (hub.INSTANCE, state.commands_version,
+                                     now() // 10 if state.open_commands else 0)
     send_snapshot = request.query_params.get("sv") != snapshot_version
     send_evidence = request.query_params.get("ev") != evidence_version
+    send_commands = request.query_params.get("cv") != commands_version
     if send_snapshot:
-        row = db.one("SELECT snapshot FROM nx_servers WHERE id=%s", (server_id,))
-        server["snapshot"] = row["snapshot"] if row else None
+        server = {**server, "snapshot": hub.snapshot_of(state)}
+    if send_evidence and state.evidence:
+        hub.flush(state)
     evidence = db.query(
         "SELECT e.id, e.body, (SELECT count(*) FROM nx_media m "
         "WHERE m.server=e.server AND m.evidence_id=e.id) AS images "
@@ -553,7 +560,7 @@ async def snapshot(request: Request, server_id: str):
         "SELECT id, actor_name, body, created, expires, status, result, ack_at "
         "FROM nx_commands WHERE server=%s ORDER BY created DESC LIMIT 25",
         (server_id,),
-    )
+    ) if send_commands else []
 
     public_snapshot = (server.get("snapshot") or {}) if send_snapshot else {}
     if send_snapshot and user["role"] not in ("owner", "administrator"):
@@ -575,11 +582,13 @@ async def snapshot(request: Request, server_id: str):
         "serverTime": now(),
         "snapshotVersion": snapshot_version,
         "evidenceVersion": evidence_version,
+        "commandsVersion": commands_version,
         "snapshotUnchanged": not send_snapshot,
         "evidenceUnchanged": not send_evidence,
+        "commandsUnchanged": not send_commands,
         "snapshot": public_snapshot if send_snapshot else None,
         "evidence": [dict(e["body"], images=int(e["images"])) for e in evidence] if send_evidence else None,
-        "commands": [
+        "commands": None if not send_commands else [
             {
                 "id": str(c["id"]),
                 "actor": c["actor_name"],
@@ -610,6 +619,7 @@ async def server_disconnects(request: Request, server_id: str):
     user = authenticated(request)
     rate(f"disconnects:{user['user_id']}", 60, 60)
     _server_of(user, server_id)
+    _fresh(user["workspace"])
     db.ensure_schema()
     return reply(disconnect_store.summary(
         user["workspace"], server_id, request.query_params.get("window", "24h")))
@@ -621,6 +631,7 @@ async def server_activity(request: Request, server_id: str):
     user = authenticated(request)
     rate(f"activity:{user['user_id']}", 60, 60)
     _server_of(user, server_id)
+    _fresh(user["workspace"])
     db.ensure_schema()
     return reply(event_store.activity(
         user["workspace"], server_id, request.query_params.get("window", "24h")))
@@ -654,7 +665,7 @@ async def command(request: Request, server_id: str):
             "Your role cannot perform this action.")
     require(_online(server["last_seen"]), 409,
             "Server is offline. Reconnect it before sending commands.")
-    snap = server["snapshot"] or {}
+    snap = hub.snapshot_of(hub.by_id(server_id))
 
     # Every mutating command carries the value it expects to be acting on. If the
     # world moved since the page was drawn, the command is refused rather than
@@ -760,6 +771,8 @@ async def command(request: Request, server_id: str):
              db.jsonb(payload.model_dump(mode="json")), timestamp,
              timestamp + (CONFIG_TTL if kind in CONFIG_KINDS else ACTION_TTL)),
         )
+    # Wake the game server's held request: it collects this in well under a second.
+    hub.command_queued(server_id)
     audit(user, "command." + kind, str(server["name"]) + " / " + command_id)
     return reply({"id": command_id, "status": "pending"}, 202)
 
@@ -808,7 +821,7 @@ async def stream_frames(request: Request, server_id: str):
     rate("stream-view:" + str(user["user_id"]), 270, 60)
     payload = StreamFramesRequest(**await json_body(request, 12_000))
     timestamp = now()
-    snapshot = server.get("snapshot") or {}
+    snapshot = hub.snapshot_of(hub.by_id(server_id))
     players = {int(player.get("src") or 0): player
                for player in snapshot.get("players", [])}
     frames = []

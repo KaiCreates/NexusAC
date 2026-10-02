@@ -16,7 +16,7 @@ import re
 
 from fastapi import Request
 
-from . import db, maintenance
+from . import db, hub
 from .protocol import (
     MAX_MEDIA_BYTES, MAX_SNAPSHOT_BYTES, MAX_STREAM_FRAME_BYTES,
     MediaRequest, StreamFrameRequest, StreamStartRequest, SyncRequest,
@@ -54,8 +54,11 @@ BRIDGE_LIMITS = {
 def server_for(request: Request, action: str) -> dict:
     match = BEARER.match(request.headers.get("authorization", "") or "")
     require(match, 401, "A server API key is required.")
-    server = db.one("SELECT * FROM nx_servers WHERE token_hash=%s", (sha256(match.group(1)),))
-    require(server, 401, "Invalid or revoked server API key.")
+    # Cached in memory (app/hub.py). This used to be SELECT *, which pulled the
+    # whole ~300 KB snapshot out of the database on every bridge request.
+    state = hub.by_token(sha256(match.group(1)))
+    require(state, 401, "Invalid or revoked server API key.")
+    server = state.row
     # Media uploads are bursty. Sharing their bucket with sync/heartbeat made
     # an evidence burst mark an otherwise healthy server offline (429 loop).
     rate(f"bridge:{server['id']}:{action}", BRIDGE_LIMITS[action], 60)
@@ -78,28 +81,15 @@ async def handle(request: Request, action: str):
         })
     if action == "heartbeat":
         # Lightweight recovery path used when a full snapshot cannot be
-        # accepted. It keeps liveness accurate without pretending that stale
-        # detector data was ingested.
-        db.execute("UPDATE nx_servers SET last_seen=%s WHERE id=%s", (now(), server_id))
+        # accepted. Liveness only, kept in memory (app/hub.py).
+        server["last_seen"] = now()
         return reply({"protocol": 1, "ok": True, "serverTime": now(), "degraded": True})
     if action == "wait":
-        # The FiveM instant channel uses this short-poll endpoint between full
-        # snapshots. It is intentionally bounded and authenticated; ordinary
-        # sync remains the source of truth for acknowledgements.
-        with db.transaction() as cur:
-            cur.execute(
-                """SELECT id, body, actor_name, expires FROM nx_commands
-                   WHERE server=%s AND status='pending' AND expires>%s
-                   ORDER BY created, id LIMIT 10""", (server_id, now()),
-            )
-            queued = cur.fetchall()
-            for item in queued:
-                cur.execute("UPDATE nx_commands SET status='sent' WHERE id=%s", (item["id"],))
-        return reply({
-            "protocol": 1, "serverTime": now(),
-            "commands": [{"id": str(item["id"]), "actor": item["actor_name"],
-                          "expires": int(item["expires"]), **item["body"]} for item in queued],
-        })
+        # A long poll: held until a staff member queues a command (answered in
+        # well under a second) or LONG_POLL_SECONDS pass. Waiting costs no
+        # database access at all. `held` tells the resource to re-poll at once.
+        commands = await hub.long_poll(hub.by_id(server_id))
+        return reply({"protocol": 1, "serverTime": now(), "held": True, "commands": commands})
     if action == "media":
         return await _media(request, server_id)
     if action == "inventory":
@@ -110,7 +100,7 @@ async def handle(request: Request, action: str):
         return await _stream(request, server, server_id)
     require(action == "sync", 404, "Unknown bridge endpoint.")
     try:
-        response = await _sync(request, server, server_id)
+        return await _sync(request, server, server_id)
     except HttpError:
         raise
     except Exception as error:
@@ -122,13 +112,6 @@ async def handle(request: Request, action: str):
             "error": "Bridge sync could not be stored.",
             "code": type(error).__name__,
         }, 503)
-    # Retention rides on the heartbeat (at most hourly per worker). A failed
-    # sweep must never fail the sync that triggered it.
-    try:
-        maintenance.sweep()
-    except Exception as error:  # noqa: BLE001
-        log.warning("[NexusAC] retention sweep failed: %s", error)
-    return response
 
 
 async def _media(request: Request, server_id: str):
@@ -138,6 +121,9 @@ async def _media(request: Request, server_id: str):
     except (binascii.Error, IndexError):
         raise HttpError(400, "Screenshot is not valid base64.")
     require(len(raw) > 3 and raw[:3] == b"\xff\xd8\xff", 400, "Expected a JPEG screenshot.")
+    state = hub.by_id(server_id)
+    if state and payload.evidenceId in state.evidence:
+        hub.flush(state)   # the case is still buffered; it must exist before its image
     require(
         db.one(
             "SELECT id FROM nx_evidence WHERE server=%s AND id=%s", (server_id, payload.evidenceId)
@@ -150,11 +136,14 @@ async def _media(request: Request, server_id: str):
            ON CONFLICT(server,evidence_id,slot) DO UPDATE SET data=EXCLUDED.data, created=EXCLUDED.created""",
         (server_id, payload.evidenceId, payload.slot, payload.data, now()),
     )
+    if state:
+        state.evidence_version += 1   # the dashboard's image counts change
     return reply({"ok": True})
 
 
 def _player_session_matches(server: dict, target: int, player_session: str) -> bool:
-    snapshot = server.get("snapshot") or {}
+    state = hub.by_id(server["id"])
+    snapshot = hub.snapshot_of(state) if state else {}
     return any(int(player.get("src") or 0) == target
                and player.get("sessionKey") == player_session
                for player in snapshot.get("players", []))
@@ -482,125 +471,7 @@ async def _sync(request: Request, server: dict, server_id: str):
     event_log = snapshot.pop("eventLog", None) or {}
     punishments = snapshot.pop("punishments", None) or {}
 
-    with db.transaction() as cur:
-        # Re-read inside the write transaction: a key rotation and a poll that
-        # started before it cannot race past each other.
-        cur.execute(
-            "SELECT boot, sequence FROM nx_servers WHERE id=%s AND token_hash=%s FOR UPDATE",
-            (server_id, server["token_hash"]),
-        )
-        current = cur.fetchone()
-        require(current, 401, "Server API key was rotated.")
-
-        # Live screen data is a replace-in-place cache, not evidence. Keep only
-        # recent frames and leases while this server is checking in.
-        cur.execute("DELETE FROM nx_stream_frames WHERE server=%s AND updated<%s",
-                    (server_id, now() - 20))
-        cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND expires<=%s",
-                    (server_id, now()))
-
-        if current["boot"] == payload.boot:
-            require(
-                payload.sequence > int(current["sequence"]),
-                409,
-                "Duplicate or out-of-order snapshot.",
-            )
-        else:
-            cur.execute(
-                "SELECT boot FROM nx_bridge_boots WHERE server=%s AND boot=%s",
-                (server_id, payload.boot),
-            )
-            require(cur.fetchone() is None, 409, "This resource session has already ended.")
-            cur.execute(
-                "INSERT INTO nx_bridge_boots VALUES(%s,%s,%s)", (server_id, payload.boot, now())
-            )
-
-        cur.execute(
-            "UPDATE nx_servers SET last_seen=%s, snapshot=%s, boot=%s, sequence=%s WHERE id=%s",
-            (now(), db.jsonb(snapshot), payload.boot, payload.sequence, server_id),
-        )
-
-        for item in evidence:
-            cur.execute(
-                """INSERT INTO nx_evidence VALUES(%s,%s,%s,%s)
-                   ON CONFLICT(server,id) DO UPDATE SET body=EXCLUDED.body, updated=EXCLUDED.updated
-                   WHERE nx_evidence.body IS DISTINCT FROM EXCLUDED.body""",
-                (server_id, item["id"], db.jsonb(item), now()),
-            )
-
-        # The three mirrors are enrichment, not liveness. Each runs inside its
-        # own savepoint so a failure -- most often a table that exists only
-        # after a migration nobody has run yet -- rolls back that block alone.
-        #
-        # Before this, a missing nx_events aborted the whole transaction, which
-        # meant acknowledgements were lost and NO COMMAND WAS EVER DISPATCHED.
-        # Every config change queued from the website then sat until it expired
-        # with "the server never collected it", and the cause was three tables
-        # away from the symptom.
-        degraded: list[str] = []
-        identity_cursor = _optional(cur, degraded, "identities",
-                                    _store_identities, server, server_id, identities)
-        event_cursor = _optional(cur, degraded, "events",
-                                 _store_events, server, server_id, event_log, payload.sequence)
-        punish_cursor = _optional(cur, degraded, "punishments",
-                                  _store_punishments, server, server_id, punishments)
-
-        for ack in payload.acknowledgements:
-            status = "uncertain" if ack.uncertain else ("succeeded" if ack.ok else "failed")
-            cur.execute(
-                """UPDATE nx_commands SET status=%s, result=%s, ack_at=%s
-                    WHERE id=%s AND server=%s AND status IN ('sent','expired') RETURNING body""",
-                (status, ack.message, now(), ack.id, server_id),
-            )
-            completed = cur.fetchone()
-            command = (completed or {}).get("body") or {}
-            if (command.get("type") == "stream" and command.get("operation") == "start"
-                    and not ack.ok and not ack.uncertain):
-                cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND viewer=%s",
-                            (server_id, command.get("viewerId")))
-
-        cur.execute(
-            """UPDATE nx_commands
-                  SET status='expired',
-                      result='No acknowledgement before expiry; a sent action may still have executed.'
-                WHERE server=%s AND expires<=%s AND status IN ('pending','sent')""",
-            (server_id, now()),
-        )
-
-        # Dispatch a small batch per poll. Each command still carries an
-        # expected-value check, so stale edits are refused while several toggles
-        # can reach the server in the same near-real-time sync.
-        cur.execute(
-            """SELECT id, body, actor_name, expires FROM nx_commands
-                WHERE server=%s AND status IN ('pending','sent') AND expires>%s
-                ORDER BY created, id LIMIT 10""",
-            (server_id, now()),
-        )
-        queued = cur.fetchall()
-        for item in queued:
-            cur.execute("UPDATE nx_commands SET status='sent' WHERE id=%s", (item["id"],))
-
-    return reply(
-        {
-            "protocol": 1,
-            "serverTime": now(),
-            "accepted": payload.sequence,
-            # Where the identity mirror has got to. The resource resumes from
-            # this, so a batch that never landed is simply sent again.
-            "identityCursor": identity_cursor,
-            "eventCursor": event_cursor,
-            "punishCursor": punish_cursor,
-            # Named so the resource can print which mirror is not storing, rather
-            # than the operator discovering it from an empty page weeks later.
-            "degraded": degraded,
-            "commands": [
-                {
-                    "id": str(item["id"]),
-                    "actor": item["actor_name"],
-                    "expires": int(item["expires"]),
-                    **item["body"],
-                }
-                for item in queued
-            ],
-        }
-    )
+    # Buffered in memory and written in batches (app/hub.py); acknowledgements
+    # and command redelivery still go to the database straight away.
+    return reply(hub.accept_sync(hub.by_id(server_id), payload, snapshot, evidence,
+                                 identities, event_log, punishments))

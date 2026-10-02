@@ -2384,13 +2384,14 @@ function render() {
    sends a part only when its version differs, so an idle dashboard costs a
    few hundred bytes a poll instead of a megabyte (Render's free plan has
    5 GB of outbound bandwidth a month). */
-let heldVersions = { sv: '', ev: '' };
+let heldVersions = { sv: '', ev: '', cv: '' };
 async function load(force) {
   if (loadInFlight || (!force && pollPaused())) return;
   loadInFlight = true;
   let result;
   const query = force || !serverData ? '' :
-    '?sv=' + encodeURIComponent(heldVersions.sv) + '&ev=' + encodeURIComponent(heldVersions.ev);
+    '?sv=' + encodeURIComponent(heldVersions.sv) + '&ev=' + encodeURIComponent(heldVersions.ev) +
+    '&cv=' + encodeURIComponent(heldVersions.cv);
   try { result = await api('/servers/' + SERVER + '/snapshot' + query); }
   finally { loadInFlight = false; }
   if (!result.ok) {
@@ -2400,7 +2401,9 @@ async function load(force) {
   const fresh = result.data;
   if (fresh.snapshotUnchanged && serverData) fresh.snapshot = serverData.snapshot;
   if (fresh.evidenceUnchanged && serverData) fresh.evidence = serverData.evidence;
-  heldVersions = { sv: fresh.snapshotVersion || '', ev: fresh.evidenceVersion || '' };
+  if (fresh.commandsUnchanged && serverData) fresh.commands = serverData.commands;
+  heldVersions = { sv: fresh.snapshotVersion || '', ev: fresh.evidenceVersion || '',
+                   cv: fresh.commandsVersion || '' };
   showServerData(fresh);
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
@@ -3259,10 +3262,16 @@ load(true);
 // Every 2 s while the tab is visible (unchanged polls are tiny now); never
 // while it is hidden -- a dashboard left open in a background tab used to
 // download the full snapshot every second, all day.
+// Every second while a change is waiting for the game server's confirmation
+// (it reaches the anti-cheat in well under a second), every 2 s otherwise.
+// Unchanged polls are answered from the website's memory, not the database.
+let pollTick = 0;
 setInterval(() => {
   if (document.hidden) return;
+  pollTick += 1;
+  if (pendingChanges.size === 0 && pollTick % 2) return;
   if (live && (!pollPaused() || pendingChanges.size > 0)) load(false);
-}, 2000);
+}, 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && live) load(false); });
 </script>
 {% endblock %}

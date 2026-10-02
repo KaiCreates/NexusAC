@@ -119,6 +119,32 @@ sync a timeout; it retries with backoff.
 Use a pooled connection string (Neon's `-pooler` host). Prepared statements are disabled in
 `app/db.py`, so transaction-mode poolers work.
 
+## Live state in memory (app/hub.py)
+
+Neon's free plan only stops billing compute after 5 minutes without database
+activity and suspends the database at 100 CU-hours a month, so the bridge's hot
+path never touches the database:
+
+- the API key lookup is cached and never reads the snapshot column (it used to
+  pull ~300 KB out on every request, ~75 GB of transfer a month);
+- the live snapshot, evidence and the identity/event/punishment mirrors are
+  buffered in memory and written in one transaction every `FLUSH_SECONDS`
+  (default 1200), when a page needs them, when a buffer grows large, and on
+  shutdown;
+- `/bridge/wait` is a long poll answered from memory the moment a staff member
+  queues a command: config changes and actions reach the game server in well
+  under a second (measured 8 ms locally, plus network);
+- sessions and rate limits are cached in memory, so an open dashboard (polling
+  every 1-2 s) does not keep the database awake.
+
+Commands, acknowledgements, new resource boots and screenshots are still
+written immediately. This needs **one** website process (the Render start
+command runs a single uvicorn worker); serverless hosts such as Vercel are not
+supported any more. If the process dies without a clean shutdown, up to
+`FLUSH_SECONDS` of website-side history is lost; bans and evidence also live on
+the game server. `tests/hubcheck.py` proves zero database trips in steady state
+and the command latency against a real Postgres.
+
 ## Database and accounts
 
 The site runs on any Postgres; only `DATABASE_URL` is required. It moved off

@@ -7,8 +7,10 @@ One FastAPI application serving three things:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -18,15 +20,42 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
-from . import config
+from . import config, hub
 from .api_routes import router as api_router
 from .protocol import issues
-from .security import HttpError, reply, session_for
+from .security import HttpError, forget_sessions, reply, session_for
 
 log = logging.getLogger("nexusac")
 ROOT = Path(__file__).resolve().parent
 
-app = FastAPI(title="NexusAC", docs_url=None, redoc_url=None, openapi_url=None)
+@asynccontextmanager
+async def lifespan(_app):
+    # app/hub.py buffers game-server data in memory: write it every
+    # FLUSH_SECONDS, and once more on a clean shutdown (Render redeploys send
+    # SIGTERM, which lands here).
+    task = asyncio.create_task(hub.flusher())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            hub.flush_all()
+        except Exception as error:  # noqa: BLE001
+            log.warning("[NexusAC] final flush failed: %s", error)
+
+
+app = FastAPI(title="NexusAC", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def forget_cached_sessions(request: Request, call_next):
+    """Anything a signed-in page changes (roles, members, workspace, logout) must
+    not be hidden by the session cache in app/security.py."""
+    response = await call_next(request)
+    path = request.url.path
+    if request.method != "GET" and path.startswith("/api/control/") and not path.startswith("/api/control/bridge/"):
+        forget_sessions()
+    return response
 # Render's free plan includes 5 GB of outbound bandwidth a month. The
 # dashboard's JSON compresses 5-10x; images are already compressed and are
 # served small enough that gzip costs them little.

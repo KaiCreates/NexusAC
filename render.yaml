@@ -23,3 +23,7 @@ services:
         sync: false
       - key: APP_URL
         sync: false
+      # How often buffered game-server data is written to the database
+      # (app/hub.py). Longer = fewer Neon compute-hours, more to lose on a crash.
+      - key: FLUSH_SECONDS
+        value: "1200"

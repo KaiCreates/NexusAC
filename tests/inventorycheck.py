@@ -15,13 +15,15 @@ from contextlib import contextmanager  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import api_routes, bridge, db, security  # noqa: E402
+from app import api_routes, bridge, db, hub, security  # noqa: E402
 from app.main import app  # noqa: E402
 
 SERVER = "11111111-1111-1111-1111-111111111111"
 TOKEN = "k" * 43
 commands, views = {}, {}
 server_row = {"id": SERVER, "name": "Test", "workspace": "w1", "token_hash": security.sha256(TOKEN),
+              "token_hint": "kkkkkk", "created": 1, "identity_cursor": 0, "event_cursor": 0,
+              "event_boot": None, "punish_cursor": 0, "punish_boot": None,
               "last_seen": 10**10, "sequence": 1, "boot": "b",
               "snapshot": {"players": [{"src": 3, "sessionKey": "sess-3", "name": "Kai"}]}}
 
@@ -61,10 +63,13 @@ def fake_transaction():
 
 def fake_one(sql, args=()):
     s = " ".join(sql.split())
-    if "FROM nx_servers WHERE token_hash" in s:
+    # app/hub.py: cached server lookups, never with the snapshot column.
+    if s.startswith("SELECT id, workspace, name, token_hash") and "WHERE token_hash=%s" in s:
         return server_row if args[0] == server_row["token_hash"] else None
-    if "FROM nx_servers WHERE id=%s AND workspace" in s:
-        return server_row if args[0] == SERVER and args[1] == "w1" else None
+    if s.startswith("SELECT id, workspace, name, token_hash") and "WHERE id=%s" in s:
+        return server_row if args[0] == SERVER else None
+    if s.startswith("SELECT snapshot FROM nx_servers"):
+        return {"snapshot": server_row["snapshot"]} if args[0] == SERVER else None
     if s.startswith("SELECT actor, status, result FROM nx_commands"):
         c = commands.get(args[0])
         return {"actor": c["actor"], "status": c["status"], "result": c["result"]} if c and c["server"] == args[1] else None
@@ -74,7 +79,7 @@ def fake_one(sql, args=()):
     raise AssertionError("unexpected SQL: " + s[:90])
 
 
-for mod in (db, api_routes.db, bridge.db):
+for mod in (db, api_routes.db, bridge.db, hub.db):
     mod.one, mod.transaction, mod.ensure_schema = fake_one, fake_transaction, lambda: None
     mod.jsonb = lambda value: value
 for mod in (security, api_routes, bridge):
