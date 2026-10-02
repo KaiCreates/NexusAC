@@ -25,7 +25,12 @@ def build_one(path: Path) -> str | None:
         return None
     output = DEST / f"{name}.webp"
     if output.exists() and output.stat().st_mtime >= path.stat().st_mtime:
-        return name
+        try:
+            with Image.open(output) as existing:
+                existing.verify()
+            return name
+        except OSError:
+            pass
     with Image.open(path) as original:
         has_alpha = original.mode in ("RGBA", "LA") or "transparency" in original.info
         image = ImageOps.exif_transpose(original).convert("RGBA" if has_alpha else "RGB")
