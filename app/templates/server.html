@@ -55,6 +55,7 @@
     <div class="dashboard-content">
       <div class="server-toolbar" id="toolbar">
         <span class="badge" id="online-badge"><span class="status-dot"></span> …</span>
+        <span class="badge" id="link-badge" hidden></span>
         <span class="server-region" id="seen">—</span>
         <span class="sync-note" id="rolenote"></span>
       </div>
@@ -2345,6 +2346,23 @@ function renderStats() {
 const HEADER_TABS = ['Screenshots', 'Multi-Stream'];
 const STATS_TABS = [];
 
+function renderLink() {
+  // Live link: is the game server on the instant command channel? An older
+  // NexusAC build on the game server re-checks only every 5-15 s.
+  const link = data.link || {};
+  const linkBadge = document.getElementById('link-badge');
+  if (linkBadge) {
+    linkBadge.hidden = data.status !== 'online' && data.status !== 'degraded';
+    const last = link.roundTripMs != null ? ' · last change ' + (link.roundTripMs / 1000).toFixed(1) + 's' : '';
+    linkBadge.className = 'badge ' + (link.instant ? 'success' : 'warning');
+    linkBadge.textContent = link.instant ? 'Instant changes' + last
+      : 'Slow changes — update NexusAC on the game server' + last;
+    linkBadge.title = link.instant
+      ? 'The game server is holding the instant command channel: changes reach it in well under a second.'
+      : 'The game server is not holding the instant command channel, so changes wait for its next check (5-15 s). Install the latest [nexus] build on the game server.';
+  }
+}
+
 function render() {
   const wantsHeader = HEADER_TABS.includes(tab);
   const wantsStats = STATS_TABS.includes(tab);
@@ -2368,6 +2386,7 @@ function render() {
     'badge ' + (data.status === 'online' ? 'success' : data.status === 'degraded' ? 'warning' : 'danger');
   document.getElementById('online-badge').innerHTML =
     '<span class="status-dot"></span> ' + (data.status === 'online' ? 'Protected' : data.status === 'degraded' ? 'Degraded' : 'Offline');
+  renderLink();
   document.getElementById('seen').textContent =
     'last seen ' + ago(data.lastSeen, data.serverTime) + ' · key ' + (data.hint || '') + '…';
   document.getElementById('rolenote').textContent = 'your role: ' + data.role;
@@ -2441,6 +2460,7 @@ async function load(force) {
   heldVersions = { sv: fresh.snapshotVersion || '', ev: fresh.evidenceVersion || '',
                    cv: fresh.commandsVersion || '' };
   showServerData(fresh);
+  renderLink();   // every poll: it is not part of the repaint signature
   // Only repaint when something actually changed, so a half-typed value or an
   // open dropdown is not destroyed by a poll that brought nothing new.
   const evidencePage = tab === 'Evidence' || tab === 'Screenshots';
@@ -2487,7 +2507,7 @@ async function send(body, label) {
   }
   note(msg, result.ok ? label + ' queued; waiting for the server to save it.' : result.error,
     result.ok ? 'warning' : 'bad');
-  if (result.ok) setTimeout(() => load(true), 800);
+  if (result.ok) setTimeout(() => load(true), 400);
   return result.ok;
 }
 
@@ -3292,16 +3312,16 @@ load(true);
 // Every 2 s while the tab is visible (unchanged polls are tiny now); never
 // while it is hidden -- a dashboard left open in a background tab used to
 // download the full snapshot every second, all day.
-// Every second while a change is waiting for the game server's confirmation
-// (it reaches the anti-cheat in well under a second), every 2 s otherwise.
 // Unchanged polls are answered from the website's memory, not the database.
 let pollTick = 0;
 setInterval(() => {
   if (document.hidden) return;
   pollTick += 1;
-  if (pendingChanges.size === 0 && pollTick % 2) return;
+  // Every 0.5 s while a change waits for the game server's confirmation, so
+  // "saved" shows the moment it lands; every 2 s otherwise.
+  if (pendingChanges.size === 0 && pollTick % 4) return;
   if (live && (!pollPaused() || pendingChanges.size > 0)) load(false);
-}, 1000);
+}, 500);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && live) load(false); });
 </script>
 {% endblock %}

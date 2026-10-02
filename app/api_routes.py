@@ -583,6 +583,8 @@ async def snapshot(request: Request, server_id: str):
         "snapshotVersion": snapshot_version,
         "evidenceVersion": evidence_version,
         "commandsVersion": commands_version,
+        # Not part of any version: it changes every poll and is tiny.
+        "link": hub.link(state),
         "snapshotUnchanged": not send_snapshot,
         "evidenceUnchanged": not send_evidence,
         "commandsUnchanged": not send_commands,
@@ -772,7 +774,7 @@ async def command(request: Request, server_id: str):
              timestamp + (CONFIG_TTL if kind in CONFIG_KINDS else ACTION_TTL)),
         )
     # Wake the game server's held request: it collects this in well under a second.
-    hub.command_queued(server_id)
+    hub.command_queued(server_id, command_id)
     audit(user, "command." + kind, str(server["name"]) + " / " + command_id)
     return reply({"id": command_id, "status": "pending"}, 202)
 

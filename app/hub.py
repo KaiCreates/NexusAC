@@ -79,6 +79,13 @@ class ServerState:
         self.degraded: list[str] = []
         self.last_flush = time.time()
         self.wake: asyncio.Event | None = None
+        # Live-link health, shown on the dashboard: is the game server parked
+        # on the instant channel, and how fast did the last changes land?
+        self.polling = 0                     # /wait requests currently held
+        self.last_poll_end = 0.0
+        self.queued_at: dict[str, float] = {}
+        self.last_deliver_ms: int | None = None
+        self.last_roundtrip_ms: int | None = None
 
     @property
     def id(self) -> str:
@@ -272,6 +279,9 @@ def _acknowledge_and_redeliver(state: ServerState, acknowledgements) -> list[dic
                 (status, ack.message, now(), ack.id, state.id),
             )
             command = (cur.fetchone() or {}).get("body") or {}
+            started = state.queued_at.pop(str(ack.id), None)
+            if started is not None:
+                state.last_roundtrip_ms = int((time.monotonic() - started) * 1000)
             if (command.get("type") == "stream" and command.get("operation") == "start"
                     and not ack.ok and not ack.uncertain):
                 cur.execute("DELETE FROM nx_stream_viewers WHERE server=%s AND viewer=%s",
@@ -299,11 +309,15 @@ def _acknowledge_and_redeliver(state: ServerState, acknowledgements) -> list[dic
 
 # --------------------------------------------------------------------- commands
 
-def command_queued(server_id: str) -> None:
+def command_queued(server_id: str, command_id: str | None = None) -> None:
     """Called after a staff command is inserted: wake the held long poll."""
     state = by_id(server_id)
     if not state:
         return
+    if command_id:
+        if len(state.queued_at) > 200:
+            state.queued_at.clear()
+        state.queued_at[str(command_id)] = time.monotonic()
     state.pending_dispatch = True
     state.open_commands = True
     state.commands_version += 1
@@ -324,6 +338,9 @@ def _dispatch_pending(state: ServerState) -> list[dict]:
     if queued:
         state.open_commands = True
         state.commands_version += 1
+        started = state.queued_at.get(str(queued[-1]["id"]))
+        if started is not None:
+            state.last_deliver_ms = int((time.monotonic() - started) * 1000)
     return [_command_json(item) for item in queued]
 
 
@@ -331,6 +348,24 @@ async def long_poll(state: ServerState, seconds: float = LONG_POLL_SECONDS) -> l
     """Hold the game server's request until a command is queued (or `seconds`
     pass). Answered from memory; the database is only read when there is
     something to hand out."""
+    state.polling += 1
+    try:
+        return await _hold(state, seconds)
+    finally:
+        state.polling -= 1
+        state.last_poll_end = time.monotonic()
+
+
+def link(state: ServerState) -> dict:
+    """For the dashboard. `instant` means the game server is parked on the
+    command channel (or re-parked within 2 s), so a change reaches it at once.
+    An older NexusAC build re-checks only every 5-15 s."""
+    instant = state.polling > 0 or (state.last_poll_end and time.monotonic() - state.last_poll_end < 2)
+    return {"instant": bool(instant), "deliverMs": state.last_deliver_ms,
+            "roundTripMs": state.last_roundtrip_ms}
+
+
+async def _hold(state: ServerState, seconds: float) -> list[dict]:
     deadline = time.monotonic() + seconds
     wake = state.event()
     while True:
