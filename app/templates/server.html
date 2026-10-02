@@ -76,6 +76,7 @@
 {% endblock %}
 
 {% block script %}
+<script src="/static/item-images/manifest.js"></script>
 <script>
 const SERVER = {{ server_id | tojson }};
 const msg = document.getElementById('msg');
@@ -2193,13 +2194,28 @@ function invMeta(m) {
 }
 
 function invItems(items, emptyText) {
-  const rows = (items || []).map((it) =>
-    '<tr><td class="muted">' + (it.slot != null ? num(it.slot) : '—') + '</td>' +
-    '<td><b>' + escapeHtml(it.label || it.name) + '</b>' +
-      (it.label && it.label !== it.name ? '<div class="muted mono">' + escapeHtml(it.name) + '</div>' : '') + '</td>' +
-    '<td style="text-align:right"><b>' + num(it.count) + '</b></td>' +
-    '<td class="muted">' + (invMeta(it.metadata) || '—') + '</td></tr>');
-  return table(['Slot', 'Item', 'Count', 'Details'], rows, 'Empty', emptyText || 'Nothing here.');
+  if (!items || !items.length) return '<div class="inv-empty">' + icon('box', 21) +
+    '<span>' + escapeHtml(emptyText || 'Nothing here.') + '</span></div>';
+  return '<div class="inv-items">' + items.map((it) => {
+    const name = String(it.name || '');
+    const label = String(it.label || name || 'Unknown item');
+    const imageHint = it.metadata && typeof it.metadata.image === 'string' ? it.metadata.image : '';
+    const candidates = [imageHint, name].map((value) =>
+      value.split(/[\\/]/).pop().replace(/\.(png|webp)$/i, '').toLowerCase());
+    const imageName = candidates.find((value) => window.NEXUS_ITEM_IMAGES &&
+      window.NEXUS_ITEM_IMAGES.has(value));
+    const image = imageName
+      ? '<img src="/static/item-images/' + encodeURIComponent(imageName) + '.webp" alt="" loading="lazy">'
+      : '<span class="inv-item-fallback">' + icon('box', 25) + '</span>';
+    const detail = invMeta(it.metadata);
+    return '<div class="inv-item" title="' + escapeHtml(label + (name && name !== label ? ' · ' + name : '')) + '">' +
+      '<span class="inv-item-slot">' + (it.slot != null ? num(it.slot) : '—') + '</span>' +
+      '<span class="inv-item-count">×' + num(it.count) + '</span>' +
+      '<div class="inv-item-art">' + image + '</div>' +
+      '<div class="inv-item-name">' + escapeHtml(label) + '</div>' +
+      (detail ? '<div class="inv-item-meta">' + detail + '</div>' : '') +
+      '</div>';
+  }).join('') + '</div>';
 }
 
 function invTotal(items) { return (items || []).reduce((n, it) => n + (Number(it.count) || 0), 0); }
@@ -2253,24 +2269,34 @@ function viewInventories() {
   if (!INV_ROLES.includes(data.role)) {
     return panel('Inventories', '<div class="empty-state"><h3>Not available for your role</h3><p>Moderators and above can view inventories.</p></div>');
   }
-  const rows = ((inv.search || {}).rows || []).map((r) =>
-    '<tr class="inv-row" data-inv-open="' + escapeHtml(r.identifier) + '"><td><b>' + escapeHtml(r.name || '—') + '</b>' +
-      (r.player ? '<div class="muted">' + escapeHtml(r.player) + '</div>' : '') + '</td>' +
-    '<td class="mono muted">' + escapeHtml(r.identifier) + '</td>' +
-    '<td>' + escapeHtml(r.job || '—') + (r.grade != null ? ' <span class="muted">' + num(r.grade) + '</span>' : '') + '</td>' +
-    '<td>' + (r.online ? '<span class="ov-chip ok">Online · ID ' + num(r.src) + '</span>' : '<span class="ov-chip dim">Offline</span>') + '</td>' +
-    '<td style="text-align:right">' + icon('chevron-right', 14) + '</td></tr>');
-  const search = '<div class="inv-search"><input class="cfg-input" id="inv-q" placeholder="Character name, FiveM name or identifier (empty = everyone)" ' +
-    'maxlength="60" value="' + escapeHtml(inv.query) + '" spellcheck="false">' +
-    '<button class="button small light" data-inv-search' + (inv.busy || !data.online ? ' disabled' : '') + '>' + icon('search', 14) + ' Search</button></div>';
-  const left = panel('Characters', search + inventoryStatus() + (inv.search
-    ? table(['Character', 'Identifier', 'Job', 'Status', ''], rows, 'No matches', 'Nobody matches "' + (inv.search.query || '') + '".')
-    : '<div class="empty-state"><h3>Search for a character</h3><p>Online players are listed first and show their live pockets. Offline characters show their last saved inventory.</p></div>'),
-    inv.search ? '<span class="badge">' + num(rows.length) + '</span>' : '');
-  return offlineNote() + '<div class="inv-layout"><div>' + left + '</div><div>' +
-    (inv.view ? inventoryBody(inv.view) : panel('Inventory', '<div class="empty-state"><h3>Pick a character</h3>' +
-      '<p>Pockets, money, every owned vehicle\'s glovebox and trunk, and their stashes.</p></div>')) +
-    '</div></div>';
+  const rows = ((inv.search || {}).rows || []).map((r) => {
+    const selected = inv.view && inv.view.identifier === r.identifier;
+    return '<button class="inv-character' + (selected ? ' selected' : '') + '" data-inv-open="' +
+      escapeHtml(r.identifier) + '" aria-label="View inventory for ' + escapeHtml(r.name || r.identifier) + '">' +
+      '<span class="inv-character-avatar">' + escapeHtml((r.name || '?').charAt(0).toUpperCase()) + '</span>' +
+      '<span class="inv-character-main"><strong>' + escapeHtml(r.name || 'Unknown character') + '</strong>' +
+      '<small>' + escapeHtml(r.player || r.job || 'Character') + '</small>' +
+      '<span class="mono inv-character-id" title="' + escapeHtml(r.identifier) + '">' + escapeHtml(r.identifier) + '</span></span>' +
+      '<span class="inv-character-state ' + (r.online ? 'online' : '') + '">' +
+      (r.online ? 'Online' : 'Offline') + '</span></button>';
+  });
+  const search = '<form class="inv-search" id="inv-search-form"><input class="cfg-input" id="inv-q" type="search" ' +
+    'aria-label="Search characters" placeholder="Search characters or identifiers" maxlength="60" value="' +
+    escapeHtml(inv.query) + '" spellcheck="false">' +
+    '<button class="button small light" type="submit" aria-label="Search characters"' +
+    (inv.busy || !data.online ? ' disabled' : '') +
+    '>' + icon('search', 14) + '<span>Search</span></button></form>';
+  const list = inv.search ? (rows.length ? rows.join('') :
+    '<div class="inv-list-empty">No characters match “' + escapeHtml(inv.search.query || '') + '”.</div>') :
+    '<div class="inv-list-empty">Search by character name or identifier to browse inventories.</div>';
+  const left = '<section class="panel inv-browser"><div class="panel-heading"><h3>Characters</h3>' +
+    (inv.search ? '<span class="badge">' + num(rows.length) + '</span>' : '') + '</div>' +
+    search + inventoryStatus() + '<div class="inv-character-scroll">' + list + '</div></section>';
+  const right = inv.view ? inventoryBody(inv.view) :
+    panel('Inventory', '<div class="inv-placeholder">' + icon('box', 36) +
+      '<h3>Select a character</h3><p>Inspect pockets, money, vehicle storage, and stashes in one place.</p></div>');
+  return offlineNote() + '<div class="inv-layout">' + left +
+    '<div class="inv-workspace">' + right + '</div></div>';
 }
 
 const VIEWS = {
@@ -2362,7 +2388,17 @@ function render() {
   const inDrawer = focused && !!focused.closest('.cfg-drawer');
   const caret = focused && typeof focused.selectionStart === 'number' ? focused.selectionStart : null;
   const selectedCapture = tab === 'Screenshots' ? document.getElementById('sc-target')?.value : null;
+  const inventoryScroll = tab === 'Inventories' ? {
+    characters: document.querySelector('.inv-character-scroll')?.scrollTop || 0,
+    workspace: document.querySelector('.inv-workspace')?.scrollTop || 0,
+  } : null;
   document.getElementById('view').innerHTML = (VIEWS[tab] || viewOverview)();
+  if (inventoryScroll) {
+    const characters = document.querySelector('.inv-character-scroll');
+    const workspace = document.querySelector('.inv-workspace');
+    if (characters) characters.scrollTop = inventoryScroll.characters;
+    if (workspace) workspace.scrollTop = inventoryScroll.workspace;
+  }
   if (selectedCapture !== null) {
     const target = document.getElementById('sc-target');
     if (target && Array.from(target.options).some((option) => option.value === selectedCapture))
@@ -2487,12 +2523,14 @@ function reasonDialog(title, warning, onConfirm, extraHtml) {
   );
 }
 
+document.addEventListener('submit', (event) => {
+  if (event.target.id !== 'inv-search-form') return;
+  event.preventDefault();
+  inv.query = (document.getElementById('inv-q') || {}).value || '';
+  inventoryRequest({ operation: 'search', query: inv.query.trim() }, 'search');
+});
+
 document.addEventListener('click', async (event) => {
-  const invSearch = event.target.closest('[data-inv-search]');
-  if (invSearch) {
-    inv.query = (document.getElementById('inv-q') || {}).value || '';
-    return inventoryRequest({ operation: 'search', query: inv.query.trim() }, 'search');
-  }
   const invOpen = event.target.closest('[data-inv-open]') || event.target.closest('[data-inv-refresh]');
   if (invOpen) {
     const identifier = invOpen.dataset.invOpen || invOpen.dataset.invRefresh;
@@ -3242,14 +3280,6 @@ document.addEventListener('input', (event) => {
   const replacement = fresh.querySelector('.cfg-grid') || fresh.querySelector('.panel');
   const current = grid || document.querySelector('#view > .panel:last-of-type');
   if (replacement && current) current.replaceWith(replacement);
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && event.target.id === 'inv-q') {
-    event.preventDefault();
-    inv.query = event.target.value;
-    inventoryRequest({ operation: 'search', query: inv.query.trim() }, 'search');
-  }
 });
 
 load(true);
