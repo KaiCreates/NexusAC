@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NexusAC sign in</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+  <div class="center">
+    <form class="card auth" id="f">
+      <div class="brand"><div class="logo">NX</div><div><b>NexusAC</b><small>Staff panel</small></div></div>
+      <label>Username<input name="username" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary full" type="submit">Sign in</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+  <script src="/static/site.js"></script>
+  <script>formTo('f', '/api/login', function () { location.href = '/'; });</script>
+</body>
+</html>

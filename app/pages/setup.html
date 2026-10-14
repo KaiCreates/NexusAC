@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NexusAC setup</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+  <div class="center">
+    <form class="card auth" id="f">
+      <div class="brand"><div class="logo">NX</div><div><b>NexusAC</b><small>First-time setup</small></div></div>
+      <p class="muted" style="margin:0 0 4px;font-size:14px">Create the owner account. Only the owner can add servers and staff accounts.</p>
+      <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+      <label>Password (10+ characters)<input name="password" type="password" autocomplete="new-password" required minlength="10"></label>
+      <button class="btn primary full" type="submit">Create owner account</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+  <script src="/static/site.js"></script>
+  <script>formTo('f', '/api/setup', function () { location.href = '/'; });</script>
+</body>
+</html>

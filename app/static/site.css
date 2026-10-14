@@ -1,0 +1,50 @@
+/* Sign-in, setup and the server/account page -- same palette as the panel. */
+:root {
+  --bg: #0a0a0a; --card: #111111; --card-2: #161616; --field: #0d0d0d; --line: #222222; --line-2: #2e2e2e;
+  --text: #ededed; --muted: #a3a3a3; --dim: #6b6b6b; --green: #22c55e; --amber: #f5a524; --red: #ef4444;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+  font: 15px/1.45 "Segoe UI", Inter, Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; }
+input, select, button { font: inherit; color: inherit; }
+a { color: inherit; }
+.center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.auth { width: 100%; max-width: 380px; }
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.logo { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #e11d2e, #6b0f17);
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; }
+.brand b { font-size: 16px; }
+.brand small { display: block; color: var(--muted); font-size: 12.5px; }
+label { display: block; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+input, select { width: 100%; margin-top: 5px; padding: 10px 12px; background: var(--field); border: 1px solid var(--line-2);
+  border-radius: 9px; outline: none; }
+input:focus, select:focus { border-color: #555; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 14px; border-radius: 9px;
+  border: 1px solid var(--line-2); background: var(--card-2); cursor: pointer; text-decoration: none; }
+.btn:hover { background: #1d1d1d; }
+.btn.primary { background: #fff; color: #0a0a0a; border-color: #fff; font-weight: 600; }
+.btn.primary:hover { background: #e5e5e5; }
+.btn.danger { color: var(--red); }
+.btn.small { padding: 6px 10px; font-size: 13.5px; }
+.full { width: 100%; margin-top: 18px; }
+.err { min-height: 20px; margin-top: 10px; color: var(--red); font-size: 13.5px; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 28px 16px 60px; }
+.top { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.top .spacer { flex: 1; }
+.muted { color: var(--muted); }
+.dim { color: var(--dim); }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.section { margin-top: 18px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.list { display: flex; flex-direction: column; gap: 10px; }
+.item { display: flex; align-items: center; gap: 12px; padding: 14px; background: var(--card-2); border: 1px solid var(--line); border-radius: 11px; flex-wrap: wrap; }
+.item .grow { flex: 1 1 200px; min-width: 0; }
+.item b { display: block; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: 0 0 auto; }
+.dot.on { background: var(--green); }
+.keybox { margin-top: 12px; padding: 12px; border: 1px solid var(--amber); border-radius: 10px; background: #1a1206; font-size: 13.5px; }
+.keybox code { display: block; margin-top: 6px; padding: 8px; background: #0d0d0d; border-radius: 7px; white-space: pre-wrap; word-break: break-all; user-select: all; }
+.inline { display: grid; grid-template-columns: 1fr 1fr 160px auto; gap: 8px; align-items: end; }
+.inline label { margin: 0; }
+@media (max-width: 700px) { .inline { grid-template-columns: 1fr; } }

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NexusAC</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="panel.css">
+  <script src="clip.js"></script>
+</head>
+<body>
+  <div id="app" class="hidden">
+    <div class="shade"></div>
+    <div class="window" role="dialog" aria-label="NexusAC staff panel">
+      <aside class="side">
+        <div class="brand">
+          <div class="logo">NX</div>
+          <div class="names">
+            <b id="server-name">Server</b>
+            <small><span class="on-text">Online</span> <span id="server-slots">-</span></small>
+          </div>
+          <button class="icon-btn ghost" id="btn-close-side" title="Close (Esc)"></button>
+        </div>
+        <nav id="nav"></nav>
+        <div class="side-tools">
+          <button class="icon-btn" id="btn-refresh" title="Refresh"></button>
+          <button class="icon-btn" id="btn-mode" title="Anti-cheat mode"></button>
+        </div>
+        <div class="me">
+          <div class="avatar" id="me-avatar">?</div>
+          <div class="names"><b id="me-name">staff</b><small id="me-role">staff</small></div>
+          <span class="ver" id="version"></span>
+        </div>
+      </aside>
+      <main class="main">
+        <section id="content" class="content"></section>
+      </main>
+      <div id="drawer" class="drawer hidden"></div>
+      <div id="modal-shade" class="modal-shade hidden"><div id="modal" class="modal"></div></div>
+      <div id="toasts" class="toasts"></div>
+    </div>
+  </div>
+  <script src="panel.js"></script>
+</body>
+</html>

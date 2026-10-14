@@ -1,218 +1,363 @@
-"""NexusAC website.
+"""NexusAC web panel.
 
-One FastAPI application serving three things:
-  * /api/control/bridge/*  - the anti-cheat's outbound bridge (API key auth)
-  * /api/control/*         - the JSON API this site's own pages call (cookie auth)
-  * everything else        - the server-rendered pages
+The in-game staff panel (NexusAC/html/panel.*), served on the web. Every page
+and button talks to the game server through the live link in hub.py, and the
+game server answers with the same code that answers staff in game -- so the
+website and the in-game panel can never drift apart.
+
+Run: uvicorn app.main:app   (ONE worker: the live link lives in memory)
 """
-from __future__ import annotations
-
-import asyncio
-import logging
-import traceback
-from contextlib import asynccontextmanager
+import contextlib
+import hmac
+import json
+import os
+import re
+import secrets
+import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from pydantic import ValidationError
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
-from . import config, hub
-from .api_routes import router as api_router
-from .protocol import issues
-from .security import HttpError, forget_sessions, reply, session_for
+from . import auth, hub, store
 
-log = logging.getLogger("nexusac")
-ROOT = Path(__file__).resolve().parent
+HERE = Path(__file__).parent
+PAGES = HERE / "pages"
+PANEL = HERE / "panel"
+SECURE_COOKIE = os.environ.get("COOKIE_SECURE", "1") != "0"
+MAX_BRIDGE_BODY = 30 * 1024 * 1024
+NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 
-@asynccontextmanager
-async def lifespan(_app):
-    # app/hub.py buffers game-server data in memory: write it every
-    # FLUSH_SECONDS, and once more on a clean shutdown (Render redeploys send
-    # SIGTERM, which lands here).
-    task = asyncio.create_task(hub.flusher())
+
+# --------------------------------------------------------------------- helpers
+def ok(**data) -> JSONResponse:
+    return JSONResponse({"ok": True, **data})
+
+
+def fail(msg: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"ok": False, "msg": msg}, status_code=status)
+
+
+def me(request: Request) -> dict | None:
+    return auth.read_cookie(request.cookies.get(auth.COOKIE))
+
+
+async def body_json(request: Request, limit: int = 256 * 1024) -> dict:
+    raw = await request.body()
+    if len(raw) > limit:
+        raise ValueError("too large")
+    data = json.loads(raw or b"{}")
+    if not isinstance(data, dict):
+        raise ValueError("not an object")
+    return data
+
+
+def guarded(owner_only: bool = False):
+    """Signed in (and owner, if asked). POSTs also need the X-NX header, which
+    a cross-site form or image cannot send: that is the CSRF guard."""
+    def wrap(fn):
+        async def inner(request: Request):
+            if request.method != "GET" and request.headers.get("x-nx") != "1":
+                return fail("Bad request.", 403)
+            user = me(request)
+            if not user:
+                return fail("Sign in again.", 401)
+            if owner_only and user["role"] != "owner":
+                return fail("Only the owner can do that.", 403)
+            request.state.user = user
+            try:
+                return await fn(request)
+            except (ValueError, json.JSONDecodeError):
+                return fail("Bad request.")
+        return inner
+    return wrap
+
+
+class Limiter:
+    """Fixed-window counters in memory."""
+    def __init__(self) -> None:
+        self.hits: dict[str, list] = {}
+
+    def allow(self, key: str, limit: int, window: float) -> bool:
+        now = time.monotonic()
+        h = self.hits.get(key)
+        if not h or now - h[0] >= window:
+            self.hits[key] = [now, 1]
+            if len(self.hits) > 5000:
+                self.hits.clear()
+            return True
+        h[1] += 1
+        return h[1] <= limit
+
+
+limiter = Limiter()
+
+
+def set_session(resp: Response, username: str) -> Response:
+    resp.set_cookie(auth.COOKIE, auth.make_cookie(username), max_age=auth.SESSION_SECONDS,
+                    httponly=True, secure=SECURE_COOKIE, samesite="lax", path="/")
+    return resp
+
+
+# ----------------------------------------------------------------------- pages
+async def index(request: Request):
+    if not store.state["users"]:
+        return FileResponse(PAGES / "setup.html")
+    if not me(request):
+        return FileResponse(PAGES / "login.html")
+    return FileResponse(PAGES / "home.html")
+
+
+_panel_html: str | None = None
+
+
+def panel_html() -> str:
+    """panel.html from the game, pointed at the web transport."""
+    global _panel_html
+    if _panel_html is None:
+        html = (PANEL / "panel.html").read_text(encoding="utf-8")
+        html = html.replace('href="panel.css"', 'href="/panel/panel.css"')
+        html = html.replace('<script src="clip.js"></script>',
+                            '<link rel="stylesheet" href="/static/web.css">\n  <script src="/static/web.js"></script>\n  <script src="/panel/clip.js"></script>')
+        html = html.replace('<script src="panel.js"></script>', '<script src="/panel/panel.js"></script>')
+        _panel_html = html
+    return _panel_html
+
+
+async def panel_page(request: Request):
+    sid = request.path_params["sid"]
+    if not me(request):
+        return RedirectResponse("/", 303)
+    if sid not in store.state["servers"]:
+        return RedirectResponse("/", 303)
+    html = panel_html().replace("<head>", '<head>\n  <meta name="nx-server" content="%s">' % sid, 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+async def health(request: Request):
+    return JSONResponse({"ok": True, "servers": {sid: hub.link(sid).online for sid in store.state["servers"]}})
+
+
+# ------------------------------------------------------------- setup / login
+async def api_setup(request: Request):
+    if store.state["users"]:
+        return fail("Already set up.", 403)
+    if request.headers.get("x-nx") != "1":
+        return fail("Bad request.", 403)
+    data = await body_json(request)
+    name, pw = str(data.get("username", "")), str(data.get("password", ""))
+    if not NAME_RE.match(name):
+        return fail("Username: 3-32 letters, numbers, . _ -")
+    if len(pw) < 10:
+        return fail("Password: at least 10 characters.")
+    store.state["users"][name] = {"hash": auth.hash_password(pw), "role": "owner", "v": 0, "created": int(time.time())}
+    await store.save()
+    return set_session(ok(), name)
+
+
+async def api_login(request: Request):
+    if request.headers.get("x-nx") != "1":
+        return fail("Bad request.", 403)
+    ip = request.client.host if request.client else "?"
+    if not limiter.allow("login:" + ip, 10, 300):
+        return fail("Too many attempts. Wait a few minutes.", 429)
+    data = await body_json(request)
+    name, pw = str(data.get("username", "")), str(data.get("password", ""))
+    user = store.state["users"].get(name)
+    # Hash even for unknown names so timing does not reveal which exist.
+    good = auth.check_password(pw, user["hash"] if user else "scrypt$00$00")
+    if not user or not good:
+        return fail("Wrong username or password.", 401)
+    return set_session(ok(), name)
+
+
+async def api_logout(request: Request):
+    resp = ok()
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+@guarded()
+async def api_me(request: Request):
+    u = request.state.user
+    servers = [{"id": sid, "name": s["name"], "online": hub.link(sid).online, "info": hub.link(sid).info,
+                "keyPrefix": s.get("keyPrefix", "") if u["role"] == "owner" else None}
+               for sid, s in store.state["servers"].items()]
+    users = None
+    if u["role"] == "owner":
+        users = [{"username": n, "role": x["role"]} for n, x in store.state["users"].items()]
+    return ok(user={"username": u["username"], "role": u["role"]}, servers=servers, users=users, roles=auth.ROLES)
+
+
+# ------------------------------------------------------- owner: servers/users
+@guarded(owner_only=True)
+async def api_server_create(request: Request):
+    data = await body_json(request)
+    name = str(data.get("name", "")).strip()[:60]
+    if not name:
+        return fail("Give the server a name.")
+    key, digest = auth.new_server_key()
+    sid = secrets.token_hex(6)
+    store.state["servers"][sid] = {"name": name, "keyHash": digest, "keyPrefix": key[:6], "created": int(time.time())}
+    await store.save()
+    return ok(id=sid, key=key)
+
+
+@guarded(owner_only=True)
+async def api_server_rotate(request: Request):
+    sid = request.path_params["sid"]
+    s = store.state["servers"].get(sid)
+    if not s:
+        return fail("Unknown server.", 404)
+    key, digest = auth.new_server_key()
+    s["keyHash"], s["keyPrefix"] = digest, key[:6]
+    await store.save()
+    return ok(key=key)
+
+
+@guarded(owner_only=True)
+async def api_server_delete(request: Request):
+    sid = request.path_params["sid"]
+    if store.state["servers"].pop(sid, None) is None:
+        return fail("Unknown server.", 404)
+    hub.links.pop(sid, None)
+    await store.save()
+    return ok()
+
+
+@guarded(owner_only=True)
+async def api_user_save(request: Request):
+    data = await body_json(request)
+    name, role, pw = str(data.get("username", "")), str(data.get("role", "")), data.get("password")
+    if not NAME_RE.match(name):
+        return fail("Username: 3-32 letters, numbers, . _ -")
+    if role not in auth.ROLES:
+        return fail("Unknown role.")
+    users = store.state["users"]
+    user = users.get(name)
+    if user is None:
+        if not isinstance(pw, str) or len(pw) < 10:
+            return fail("Password: at least 10 characters.")
+        users[name] = {"hash": auth.hash_password(pw), "role": role, "v": 0, "created": int(time.time())}
+    else:
+        if name == request.state.user["username"] and role != "owner":
+            return fail("You cannot take owner away from yourself.")
+        user["role"] = role
+        if isinstance(pw, str) and pw:
+            if len(pw) < 10:
+                return fail("Password: at least 10 characters.")
+            user["hash"] = auth.hash_password(pw)
+            user["v"] = user.get("v", 0) + 1
+    await store.save()
+    return ok()
+
+
+@guarded(owner_only=True)
+async def api_user_delete(request: Request):
+    name = request.path_params["name"]
+    if name == request.state.user["username"]:
+        return fail("You cannot delete yourself.")
+    if store.state["users"].pop(name, None) is None:
+        return fail("Unknown user.", 404)
+    await store.save()
+    return ok()
+
+
+@guarded()
+async def api_password(request: Request):
+    data = await body_json(request)
+    u = store.state["users"][request.state.user["username"]]
+    if not auth.check_password(str(data.get("current", "")), u["hash"]):
+        return fail("Current password is wrong.")
+    pw = str(data.get("password", ""))
+    if len(pw) < 10:
+        return fail("Password: at least 10 characters.")
+    u["hash"], u["v"] = auth.hash_password(pw), u.get("v", 0) + 1
+    await store.save()
+    return set_session(ok(), request.state.user["username"])
+
+
+# ------------------------------------------------------------- panel transport
+@guarded()
+async def api_query(request: Request):
+    """One panel request (open / section / exec), answered by the game server."""
+    sid = request.path_params["sid"]
+    if sid not in store.state["servers"]:
+        return fail("Unknown server.", 404)
+    u = request.state.user
+    data = await body_json(request)
+    kind = data.get("kind")
+    if kind not in ("open", "section", "exec"):
+        return fail("Bad request.")
+    if kind == "exec":
+        if not limiter.allow("x:" + u["username"], 6, 1.0):
+            return JSONResponse({"ok": False, "msg": "Slow down a moment."})
+    elif not limiter.allow("s:" + u["username"], 30, 1.0):
+        return JSONResponse({"ok": False, "msg": "Slow down a moment."})
+    job = {"kind": kind, "role": u["role"], "user": u["username"]}
+    if kind == "section":
+        job["section"], job["arg"] = str(data.get("section", ""))[:40], data.get("arg")
+    elif kind == "exec":
+        if not isinstance(data.get("cmd"), dict):
+            return fail("Bad request.")
+        job["cmd"] = data["cmd"]
+    return JSONResponse(await hub.ask(sid, job))
+
+
+# ------------------------------------------------------------------ the bridge
+def server_for_key(header: str | None) -> str | None:
+    if not header or not header.startswith("Bearer "):
+        return None
+    digest = auth.key_hash(header[7:].strip())
+    for sid, s in store.state["servers"].items():
+        if hmac.compare_digest(s["keyHash"], digest):
+            return sid
+    return None
+
+
+async def api_bridge(request: Request):
+    sid = server_for_key(request.headers.get("authorization"))
+    if not sid:
+        return fail("Unknown key.", 401)
+    raw = await request.body()
+    if len(raw) > MAX_BRIDGE_BODY:
+        return fail("Too large.", 413)
     try:
-        yield
-    finally:
-        task.cancel()
-        try:
-            hub.flush_all()
-        except Exception as error:  # noqa: BLE001
-            log.warning("[NexusAC] final flush failed: %s", error)
+        body = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        return fail("Bad JSON.")
+    jobs = await hub.bridge(sid, body if isinstance(body, dict) else {})
+    return JSONResponse({"ok": True, "jobs": jobs})
 
 
-app = FastAPI(title="NexusAC", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+# --------------------------------------------------------------------- the app
+@contextlib.asynccontextmanager
+async def lifespan(app):
+    await store.load()
+    yield
 
 
-@app.middleware("http")
-async def forget_cached_sessions(request: Request, call_next):
-    """Anything a signed-in page changes (roles, members, workspace, logout) must
-    not be hidden by the session cache in app/security.py."""
-    response = await call_next(request)
-    path = request.url.path
-    if request.method != "GET" and path.startswith("/api/control/") and not path.startswith("/api/control/bridge/"):
-        forget_sessions()
-    return response
-# Render's free plan includes 5 GB of outbound bandwidth a month. The
-# dashboard's JSON compresses 5-10x; images are already compressed and are
-# served small enough that gzip costs them little.
-app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
-app.include_router(api_router, prefix="/api/control")
-app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
-templates = Jinja2Templates(directory=str(ROOT / "templates"))
+routes = [
+    Route("/", index),
+    Route("/s/{sid}", panel_page),
+    Route("/health", health),
+    Route("/api/setup", api_setup, methods=["POST"]),
+    Route("/api/login", api_login, methods=["POST"]),
+    Route("/api/logout", api_logout, methods=["POST"]),
+    Route("/api/me", api_me),
+    Route("/api/password", api_password, methods=["POST"]),
+    Route("/api/servers", api_server_create, methods=["POST"]),
+    Route("/api/servers/{sid}/rotate", api_server_rotate, methods=["POST"]),
+    Route("/api/servers/{sid}", api_server_delete, methods=["DELETE"]),
+    Route("/api/users", api_user_save, methods=["POST"]),
+    Route("/api/users/{name}", api_user_delete, methods=["DELETE"]),
+    Route("/api/s/{sid}/q", api_query, methods=["POST"]),
+    Route("/api/bridge", api_bridge, methods=["POST"]),
+    Mount("/panel", StaticFiles(directory=PANEL), name="panel"),
+    Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
+]
 
-
-def _wants_json(request: Request) -> bool:
-    return request.url.path.startswith("/api/") or "application/json" in (
-        request.headers.get("accept", "")
-    )
-
-
-@app.exception_handler(HttpError)
-async def http_error(request: Request, error: HttpError):
-    if _wants_json(request):
-        return reply({"error": error.message}, error.status)
-    if error.status in (401, 403) and not request.url.path.startswith("/api/"):
-        return RedirectResponse("/login?next=" + request.url.path, status_code=303)
-    return templates.TemplateResponse(
-        request, "error.html", {"status": error.status, "message": error.message},
-        status_code=error.status,
-    )
-
-
-@app.exception_handler(ValidationError)
-async def validation_error(request: Request, error: ValidationError):
-    return reply({"error": "Invalid request.", "details": issues(error)}, 400)
-
-
-@app.exception_handler(Exception)
-async def unhandled(request: Request, error: Exception):
-    # Never let a database URL or key reach the browser.
-    log.error("[NexusAC] %s\n%s", error, traceback.format_exc())
-    message = "Service unavailable. Check the server log and the database configuration."
-    if _wants_json(request):
-        # The bridge needs a stable diagnostic without exposing SQL, URLs, or
-        # stack traces. The class name lets `nexusweb` distinguish a schema,
-        # database, and application failure while the real detail stays in the
-        # server log.
-        if request.url.path.startswith("/api/control/bridge/"):
-            return reply({"error": message, "code": type(error).__name__}, 503)
-        return reply({"error": message}, 503)
-    return templates.TemplateResponse(
-        request, "error.html", {"status": 503, "message": message}, status_code=503
-    )
-
-
-@app.get("/health")
-async def health():
-    from . import db
-
-    try:
-        db.ensure_schema()
-        database = "ok"
-        status = 200
-    except Exception as error:  # surfaced deliberately: this endpoint exists to diagnose
-        database = "unavailable: " + type(error).__name__
-        status = 503
-    return JSONResponse(
-        {"service": "nexusac-web", "database": database, "schema": "ok" if status == 200 else "error"},
-        status_code=status,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Pages
-# --------------------------------------------------------------------------- #
-
-def _page(request: Request, name: str, **context) -> HTMLResponse:
-    user = None
-    try:
-        user = session_for(request)
-    except Exception:
-        pass  # a page must still render when the database is down
-    return templates.TemplateResponse(request, name, {"user": user, **context})
-
-
-@app.get("/", response_class=HTMLResponse)
-async def landing(request: Request):
-    if session_for(request):
-        return RedirectResponse("/dashboard", status_code=303)
-    return _page(request, "landing.html")
-
-
-@app.get("/login", response_class=HTMLResponse)
-async def login(request: Request):
-    if session_for(request):
-        return RedirectResponse("/dashboard", status_code=303)
-    return _page(request, "auth.html", mode="login")
-
-
-@app.get("/register", response_class=HTMLResponse)
-async def register(request: Request):
-    if session_for(request):
-        return RedirectResponse("/dashboard", status_code=303)
-    return _page(request, "auth.html", mode="register",
-                 confirm_required=config.REQUIRE_EMAIL_CONFIRMATION)
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    if not session_for(request):
-        return RedirectResponse("/login?next=/dashboard", status_code=303)
-    return _page(request, "dashboard.html")
-
-
-@app.get("/dashboard/servers/{server_id}", response_class=HTMLResponse)
-async def server_page(request: Request, server_id: str):
-    if not session_for(request):
-        return RedirectResponse("/login?next=/dashboard", status_code=303)
-    return _page(request, "server.html", server_id=server_id)
-
-
-@app.get("/identities", response_class=HTMLResponse)
-async def identities_page(request: Request):
-    if not session_for(request):
-        return RedirectResponse("/login?next=/identities", status_code=303)
-    return _page(request, "identities.html", query=request.query_params.get("q", ""))
-
-
-@app.get("/events", response_class=HTMLResponse)
-async def events_page(request: Request):
-    if not session_for(request):
-        return RedirectResponse("/login?next=/events", status_code=303)
-    return _page(request, "events.html", query=request.query_params.get("q", ""))
-
-
-@app.get("/punishments", response_class=HTMLResponse)
-async def punishments_page(request: Request):
-    if not session_for(request):
-        return RedirectResponse("/login?next=/punishments", status_code=303)
-    return _page(request, "punishments.html", query=request.query_params.get("q", ""))
-
-
-@app.get("/docs", response_class=HTMLResponse)
-async def docs(request: Request):
-    return _page(request, "docs.html", app_url=config.APP_URL)
-
-
-# The interactive demo. Simulated data only, generated in the browser — it never
-# touches the database, and needs no account.
-DEMO_SECTIONS = (
-    "overview", "servers", "players", "detections", "bans", "screenshots",
-    "protection", "events", "logs", "staff", "integrations", "license", "settings",
-)
-
-
-@app.get("/demo", response_class=HTMLResponse)
-async def demo(request: Request):
-    return _page(request, "demo.html", section="overview")
-
-
-@app.get("/demo/{section}", response_class=HTMLResponse)
-async def demo_section(request: Request, section: str):
-    if section not in DEMO_SECTIONS:
-        raise HttpError(404, "That demo section does not exist.")
-    return _page(request, "demo.html", section=section)
+app = Starlette(routes=routes, lifespan=lifespan)

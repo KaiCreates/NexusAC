@@ -1,29 +1,18 @@
-# Render Blueprint. Import the repo at render.com -> New -> Blueprint and this
-# configures the service; or create a Web Service manually with the same build
-# and start commands.
+# Render Blueprint (render.com -> New -> Blueprint), or a Web Service with the
+# same build/start commands. ONE worker: the live link to the game server lives
+# in memory.
 services:
   - type: web
     name: nexusac
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    # Keep deployed schemas in lockstep with the bridge before accepting a
-    # heartbeat. Every migration is idempotent, so restarts are safe.
-    startCommand: python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips "*"
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.13.4"
-      # sync:false means "prompt me in the dashboard, never store it in git".
-      # Copy each value from your local .env. APP_URL is optional on Render:
-      # left blank, the app uses RENDER_EXTERNAL_URL (the service's own URL).
-      # Set it only for a custom domain.
-      # Any Postgres connection string (Neon: the "pooled" one, with sslmode=require).
+      # Postgres connection string (Neon: the pooled one). Holds only accounts
+      # and server keys -- read once at start, written only when they change.
       - key: DATABASE_URL
         sync: false
-      - key: APP_URL
-        sync: false
-      # How often buffered game-server data is written to the database
-      # (app/hub.py). Longer = fewer Neon compute-hours, more to lose on a crash.
-      - key: FLUSH_SECONDS
-        value: "1200"

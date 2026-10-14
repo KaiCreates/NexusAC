@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NexusAC servers</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="logo">NX</div>
+      <div><b>NexusAC</b> <span class="muted" id="who"></span></div>
+      <span class="spacer"></span>
+      <button class="btn small" id="logout">Sign out</button>
+    </div>
+
+    <div class="card">
+      <h2>Servers</h2>
+      <div class="list" id="servers"><span class="muted">Loading...</span></div>
+      <div id="owner-servers" hidden>
+        <form class="row section" id="add-server">
+          <input name="name" placeholder="New server name" maxlength="60" style="flex:1 1 220px;margin:0" required>
+          <button class="btn primary" type="submit">Add server</button>
+        </form>
+        <div id="key"></div>
+      </div>
+    </div>
+
+    <div class="card section" id="owner-users" hidden>
+      <h2>Staff accounts</h2>
+      <p class="muted" style="margin:-4px 0 12px;font-size:14px">The role uses the anti-cheat's own permissions (the same roles as in game).</p>
+      <div class="list" id="users"></div>
+      <form class="inline section" id="add-user">
+        <label>Username<input name="username" required minlength="3" maxlength="32"></label>
+        <label>Password (10+, blank = keep)<input name="password" type="password" autocomplete="new-password"></label>
+        <label>Role<select name="role" id="role-pick"></select></label>
+        <button class="btn primary" type="submit">Save account</button>
+      </form>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="card section">
+      <h2>Your password</h2>
+      <form class="inline" id="pw" style="grid-template-columns:1fr 1fr auto">
+        <label>Current<input name="current" type="password" autocomplete="current-password" required></label>
+        <label>New (10+)<input name="password" type="password" autocomplete="new-password" required minlength="10"></label>
+        <button class="btn" type="submit">Change</button>
+      </form>
+      <div class="err" id="pw-err"></div>
+    </div>
+  </div>
+  <script src="/static/site.js"></script>
+  <script src="/static/home.js"></script>
+</body>
+</html>
