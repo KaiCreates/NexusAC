@@ -273,13 +273,19 @@ function navItem(t, sub) {
 }
 function renderNav() {
   let html = '';
+  let afterGroup = null;   // null = start, true = right after a section
   NAV.forEach((n) => {
-    if (!n.items) { html += navItem(n); return; }
+    if (!n.items) {
+      const item = navItem(n);
+      if (item && afterGroup !== false) { html += '<div class="nav-head">' + (afterGroup ? 'Records' : 'Live') + '</div>'; afterGroup = false; }
+      html += item;
+      return;
+    }
+    afterGroup = true;
     const kids = n.items.map((t) => navItem(t, true)).join('');
     if (!kids) return;
-    const open = S.navOpen[n.group] || n.items.some((t) => t.id === S.tab);
-    html += '<button class="nav-item' + (open ? ' open' : '') + '" data-act="nav-group" data-group="' + n.group + '">' + I(n.icon) + '<span class="label">' + h(n.label) + '</span>' + I('chev', 'sm chev') + '</button>' +
-      (open ? '<div class="nav-sub">' + kids + '</div>' : '');
+    // 2026-10-14 Aurora: sections are always open, under a heading.
+    html += '<div class="nav-head">' + h(n.label) + '</div>' + kids;
   });
   $('nav').innerHTML = html;
 }
@@ -362,6 +368,7 @@ function renderChrome() {
   const mode = o.mode || S.info.mode;
   const mb = $('btn-mode');
   mb.classList.toggle('enforce', mode === 'enforce');
+  mb.innerHTML = I('power', 'sm') + '<span>' + (mode === 'enforce' ? 'Enforcing' : 'Observe only') + '</span>';
   mb.title = 'Anti-cheat mode: ' + (mode || '-') + ' (click to switch)';
 }
 
@@ -384,9 +391,9 @@ function chartSvg(points) {
   }
   const area = d + ' L' + xy[xy.length - 1][0].toFixed(1) + ' ' + (H - pad) + ' L' + xy[0][0].toFixed(1) + ' ' + (H - pad) + ' Z';
   let grid = '';
-  for (let g = 0; g <= 4; g += 1) { const y = pad + (H - pad * 2) * g / 4; grid += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="#1f1f1f" stroke-width="1"/>'; }
-  return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><defs><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".28"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient></defs>' +
-    grid + '<path d="' + area + '" fill="url(#ga)"/><path d="' + d + '" fill="none" stroke="#ffffff" stroke-width="2.4" vector-effect="non-scaling-stroke"/></svg>';
+  for (let g = 0; g <= 4; g += 1) { const y = pad + (H - pad * 2) * g / 4; grid += '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="#1a2437" stroke-width="1" stroke-dasharray="4 6"/>'; }
+  return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"><defs><linearGradient id="gl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#6366f1"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2dd4bf" stop-opacity=".22"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient></defs>' +
+    grid + '<path d="' + area + '" fill="url(#ga)"/><path d="' + d + '" fill="none" stroke="url(#gl)" stroke-width="2.4" vector-effect="non-scaling-stroke"/></svg>';
 }
 PAGES.dashboard = () => {
   const o = S.data.overview;
@@ -787,7 +794,7 @@ PAGES.protection = () => {
     return '<div class="cat"><div class="ch">' + I(ci[0]) + h(g) + '<span class="n">' + items.length + '</span></div><div class="cd">' + h(ci[1]) + '</div>' +
       items.map((p) => '<div class="prow"><i class="dot ' + (p.enabled ? (p.mode === 'observe' ? 'amber' : '') : 'off') + '" title="' + h(p.enabled ? p.mode : 'disabled') + '"></i>' +
         '<div class="name" data-act="prot" data-id="' + h(p.id) + '"><b>' + h(p.name) + '</b><small>' + h(p.id) + (p.health && p.health.flags ? ' &middot; ' + h(num(p.health.players)) + ' flagged today' : '') + '</small>' +
-        (p.enabled && p.logWhy && p.logWhy.length ? '<small style="color:#f5a524">Only logging: ' + h(p.logWhy.join('; ')) + '</small>' : '') + '</div>' +
+        (p.enabled && p.logWhy && p.logWhy.length ? '<small style="color:var(--amber)">Only logging: ' + h(p.logWhy.join('; ')) + '</small>' : '') + '</div>' +
         '<button class="icon-btn more" data-act="prot" data-id="' + h(p.id) + '" title="Settings">' + I('more', 'sm') + '</button>' +
         (p.enabled ? sel('data-act-change="prot-action" data-id="' + h(p.id) + '"' + (!edit || p.locked ? ' disabled' : ''), [['log', 'Log'], ['kick', 'Kick'], ['ban', 'Ban']], p.action) : '') +
         '<button class="switch' + (p.enabled ? ' on' : '') + '" data-act="prot-toggle" data-id="' + h(p.id) + '"' + (!edit || p.locked ? ' disabled' : '') + '></button></div>').join('') + '</div>';

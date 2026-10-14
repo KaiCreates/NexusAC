@@ -10,30 +10,40 @@
 <body>
   <div id="app" class="hidden">
     <div class="shade"></div>
-    <div class="window" role="dialog" aria-label="NexusAC staff panel">
-      <aside class="side">
+    <div class="window" role="dialog" aria-label="NexusAC staff console">
+      <header class="topbar">
         <div class="brand">
-          <div class="logo">NX</div>
-          <div class="names">
-            <b id="server-name">Server</b>
-            <small><span class="on-text">Online</span> <span id="server-slots">-</span></small>
-          </div>
-          <button class="icon-btn ghost" id="btn-close-side" title="Close (Esc)"></button>
+          <svg class="emblem" viewBox="0 0 32 32" aria-hidden="true">
+            <defs><linearGradient id="nx-em" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+            <path d="M16 2 28 9v14l-12 7L4 23V9z" fill="none" stroke="url(#nx-em)" stroke-width="2.2" stroke-linejoin="round"/>
+            <path d="M11 21V11l10 10V11" fill="none" stroke="url(#nx-em)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="wordmark"><b>NEXUS</b><small>Staff Console</small></div>
         </div>
-        <nav id="nav"></nav>
-        <div class="side-tools">
+        <div class="server">
+          <i class="pulse"></i>
+          <div class="names"><b id="server-name">Server</b><small><span class="on-text">Online</span> &middot; <span id="server-slots">-</span> players</small></div>
+        </div>
+        <span class="grow"></span>
+        <div class="top-tools">
+          <button class="mode-btn" id="btn-mode" title="Anti-cheat mode"></button>
           <button class="icon-btn" id="btn-refresh" title="Refresh"></button>
-          <button class="icon-btn" id="btn-mode" title="Anti-cheat mode"></button>
         </div>
         <div class="me">
           <div class="avatar" id="me-avatar">?</div>
           <div class="names"><b id="me-name">staff</b><small id="me-role">staff</small></div>
           <span class="ver" id="version"></span>
         </div>
-      </aside>
-      <main class="main">
-        <section id="content" class="content"></section>
-      </main>
+        <button class="icon-btn ghost" id="btn-close-side" title="Close (Esc)"></button>
+      </header>
+      <div class="body">
+        <aside class="side">
+          <nav id="nav"></nav>
+        </aside>
+        <main class="main">
+          <section id="content" class="content"></section>
+        </main>
+      </div>
       <div id="drawer" class="drawer hidden"></div>
       <div id="modal-shade" class="modal-shade hidden"><div id="modal" class="modal"></div></div>
       <div id="toasts" class="toasts"></div>
