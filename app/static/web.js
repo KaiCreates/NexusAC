@@ -93,7 +93,7 @@
 
   // Back to the server list / sign out, added to the panel's own sidebar.
   document.addEventListener('DOMContentLoaded', function () {
-    const tools = document.querySelector('.top-tools') || document.querySelector('.side-tools');
+    const tools = document.querySelector('.side-tools');
     if (!tools) return;
     const home = document.createElement('a');
     home.className = 'icon-btn nx-web-home';
